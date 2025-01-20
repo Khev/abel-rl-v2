@@ -83,10 +83,10 @@ def run_sequential(eqns, args):
 def main_runner():
     parser = argparse.ArgumentParser(description="Run RL experiments on different equations.")
     parser.add_argument("--Ntrain", type=int, default=3*10**6, help="Number of training steps")
-    parser.add_argument("--Ntrial", type=int, default=10, help="Number of trials per equation")
+    parser.add_argument("--Ntrial", type=int, default=5, help="Number of trials per equation")
     parser.add_argument("--agent_type", type=str, default="ppo-mask", choices=["a2c", "ppo", "dqn"], help="RL agent type")
     parser.add_argument("--parallel", action="store_true", help="Run experiments in parallel")
-    parser.add_argument("--num_workers", type=int, default=4, help="Number of parallel workers")
+    parser.add_argument("--num_workers", type=int, default=2, help="Number of parallel workers")
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True, help="Normalize rewards (True/False)")
     parser.add_argument("--log_interval", type=int, default=None, help="Log interval")
     parser.add_argument("--save_dir", type=str, default="data/misc/", help="Directory to save logs")
@@ -104,9 +104,9 @@ def main_runner():
     # --------------------------------------
     MAIN_EQNS = [
         "a*x", "x + b", "a*x + b", "a/x + b", "c*(a*x + b) + d",
-        "(a*x + b)**2 + c", "d/(a*x + b) + c", "e*(a*x + b) + (c*x + d)",
+        "sqrt(a*x+b) - c",  "(a*x**2+b)**2 + c", "d/(a*x + b) + c", "e*(a*x + b) + (c*x + d)",
         "(a*x + b)/(c*x + d) + e"
-    ][-1:]
+    ]
 
     print("\n🧪 Running experiments for multiple equations...")
 

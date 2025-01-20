@@ -356,6 +356,14 @@ def check_eqn_solved(lhs, rhs, main_eqn):
         if sol.expand() == 0:
             return True
 
+        # Check for sqrts
+        if powdenest(sol, force=True) == 0:
+            return True
+
+        # Use cheaper method first
+        if ratsimp(sol) == 0:
+            return True
+
         return False  # Avoid full simplify unless necessary
     
     return False

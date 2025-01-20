@@ -20,22 +20,6 @@ def get_device():
         return 'cpu'
 
 
-# def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
-#     """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib."""
-#     agents = {
-#         "dqn": DQN,
-#         "ppo": PPO,
-#         "ppo-mask": MaskablePPO,
-#         "a2c": A2C,
-#     }
-    
-#     if agent_type not in agents:
-#         raise ValueError(f"Unsupported agent type: {agent_type}. Choose from {list(agents.keys())}")
-
-#     model = agents[agent_type](policy, env, **kwargs)
-#     return model
-
-
 def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
     """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib."""
     agents = {
