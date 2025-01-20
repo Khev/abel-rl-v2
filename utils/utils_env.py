@@ -8,11 +8,21 @@ from itertools import product
 from functools import lru_cache
 from operator import add, sub, mul, truediv
 from utils.custom_functions import custom_identity
-from sympy import symbols, Basic, Number, simplify
+from sympy import symbols, Basic, Number, simplify, powdenest, ratsimp
 from collections import deque
 
 
-def make_feature_dict(main_eqn):
+def make_feature_dict(main_eqn, encoding='1d_integer'):
+
+    if encoding == 'integer_1d':
+        return make_feature_dict_integer_1d(main_eqn)
+    elif encoding == 'integer_2d':
+        return make_feature_dict_integer_2d(main_eqn)
+    else:
+        raise ValueError(f"Unsupported encoding type: {encoding}")
+
+
+def make_feature_dict_integer_1d(main_eqn):
     """
     Generate a feature dictionary mapping symbols, numbers, and operations to unique integers.
 
@@ -50,6 +60,71 @@ def make_feature_dict(main_eqn):
     for operation in operations:
         feature_dict[operation] = ctr
         ctr -= 1
+
+    return feature_dict
+
+
+
+def make_feature_dict_integer_2d(main_eqn):
+    """
+    Generates a dictionary that maps variables, constants, numbers, and operations 
+    in the given equation to a structured 2D encoding.
+
+    Encoding scheme:
+    - Variables: [0, index] (e.g., x → [0, 0])
+    - Constants/Symbols: [1, index] (e.g., a → [1, 0], b → [1, 1])
+    - Numbers/Special Constants: [2, index] (e.g., 0 → [2, 2], '-1' → [2, 0], 'I' → [2, 1])
+    - Operations: [3, index] (e.g., 'add' → [3, 0], 'pow' → [3, 1])
+
+    Example output:
+    ```
+    {
+        x: [0, 0],
+        b: [1, 0],
+        a: [1, 1],
+        '-1': [2, 0],
+        'I': [2, 1],
+        0: [2, 2],
+        1: [2, 3],
+        2: [2, 4],
+        3: [2, 5],
+        'add': [3, 0],
+        'pow': [3, 1],
+        'mul': [3, 2],
+        'sqrt': [3, 3]
+    }
+    ```
+
+    Args:
+        main_eqn (sympy expression): The mathematical equation to extract features from.
+
+    Returns:
+        dict: A dictionary mapping symbols and operations to their respective 2D encodings.
+    """
+
+    feature_dict = {}
+
+    # = is special
+    feature_dict['='] = [0,0]
+
+    # 0: Variables
+    x = symbols('x')
+    variables = [x]
+    feature_dict.update({var: [1, idx] for idx, var in enumerate(variables)})
+
+    # 1: Constants/Symbols (excluding x)
+    symbols_const = sorted(main_eqn.free_symbols - {x}, key=str)  # Sort for consistency
+    feature_dict.update({sym: [2, idx] for idx, sym in enumerate(symbols_const)})
+
+    # 2: Numbers & Special Constants
+    special_constants = ['-1', 'I']
+    real_numbers = list(range(4))  # Adjust this range if needed
+    numbers = special_constants + real_numbers
+    feature_dict.update({num: [3, idx] for idx, num in enumerate(numbers)})
+
+    # 3: Operations
+    operations = ['add', 'pow', 'mul', 'sqrt']
+    feature_dict.update({op: [4, idx] for idx, op in enumerate(operations)})
 
     return feature_dict
 
