@@ -1,0 +1,35 @@
+### Creating a `.gitignore`
+
+Here's a basic `.gitignore` file to ignore common unnecessary files and directories:
+
+```gitignore
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+abel-rl/
+
+# Distribution / packaging
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Data directories
+data/
+**/data_*/**
+
+logs/

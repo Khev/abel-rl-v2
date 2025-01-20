@@ -1,0 +1,38 @@
+         144509253 function calls (133726101 primitive calls) in 42.328 seconds
+
+   Ordered by: cumulative time
+   List reduced from 4227 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   42.349   42.349 /Users/Kev/Documents/abel-rl-v2/profiler.py:6(profile_main)
+        1    0.000    0.000   42.349   42.349 /Users/Kev/Documents/abel-rl-v2/training/train_single_eqn.py:186(main)
+        1    0.000    0.000   41.760   41.760 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sb3_contrib/ppo_mask/ppo_mask.py:429(learn)
+        5    0.108    0.022   37.328    7.466 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sb3_contrib/ppo_mask/ppo_mask.py:181(collect_rollouts)
+    10251    0.006    0.000   33.066    0.003 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:198(step)
+    10251    0.056    0.000   33.058    0.003 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/stable_baselines3/common/vec_env/dummy_vec_env.py:55(step_wait)
+    10251    0.019    0.000   29.361    0.003 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/stable_baselines3/common/monitor.py:85(step)
+    10251    0.006    0.000   29.336    0.003 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/gymnasium/core.py:457(step)
+    10251    0.054    0.000   29.330    0.003 /Users/Kev/Documents/abel-rl-v2/envs/single_eqn.py:95(step)
+      562    0.002    0.000   13.623    0.024 /Users/Kev/Documents/abel-rl-v2/utils/custom_functions.py:30(custom_sqrt)
+3158367/2266089    1.338    0.000   13.543    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/cache.py:69(wrapper)
+      562    0.020    0.000   13.443    0.024 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/simplify/simplify.py:420(simplify)
+     2377    0.026    0.000    8.249    0.003 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/polys/polytools.py:7124(cancel)
+     9399    0.036    0.000    7.404    0.001 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/exprtools.py:980(gcd_terms)
+     9399    0.079    0.000    7.172    0.001 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/exprtools.py:915(_gcd_terms)
+116995/111466    0.465    0.000    5.670    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/operations.py:52(__new__)
+1747327/1401491    0.989    0.000    5.488    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/sympify.py:98(sympify)
+   236148    0.366    0.000    5.425    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/exprtools.py:289(__init__)
+     2866    0.003    0.000    5.157    0.002 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/exprtools.py:1156(factor_terms)
+60734/2866    0.129    0.000    5.153    0.002 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/exprtools.py:1217(do)
+874617/874611    0.229    0.000    5.143    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/sympify.py:488(_sympify)
+636454/636425    0.219    0.000    5.121    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/numbers.py:1936(__eq__)
+   414739    0.142    0.000    4.880    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/numbers.py:1591(__eq__)
+274445/266464    0.148    0.000    4.660    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/decorators.py:224(_func)
+        5    0.163    0.033    4.431    0.886 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sb3_contrib/ppo_mask/ppo_mask.py:309(train)
+    10252    0.078    0.000    4.394    0.000 /Users/Kev/Documents/abel-rl-v2/utils/utils_env.py:217(make_actions_cache)
+274445/266464    0.107    0.000    4.288    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/decorators.py:99(binary_op_wrapper)
+     6815    0.005    0.000    4.266    0.001 /Users/Kev/Documents/abel-rl-v2/utils/utils_env.py:211(get_cached_terms)
+     6815    0.176    0.000    4.260    0.001 /Users/Kev/Documents/abel-rl-v2/utils/utils_env.py:247(get_ordered_sub_expressions)
+   236148    0.108    0.000    3.955    0.000 /Users/Kev/mambaforge/envs/abel-rl/lib/python3.9/site-packages/sympy/core/containers.py:332(<lambda>)
+
+
