@@ -10,6 +10,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.policies import ActorCriticPolicy  # ✅ Needed for CustomCNNPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor  # ✅ Needed for EquationCNN
 from stable_baselines3.common.utils import get_device  # ✅ Not needed anymore (you define your own `get_device`)
+from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
 
 from torch_geometric.nn import GCNConv, global_mean_pool
 
@@ -38,8 +39,8 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
         "ppo": PPO,
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
-        "ppo-cnn": lambda policy, env, **kwargs: PPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: PPO(CustomGNNPolicy, env, **kwargs)
+        "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
+        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, **kwargs)
     }
     
     if agent_type not in agents:
@@ -103,7 +104,7 @@ class EquationCNN(BaseFeaturesExtractor):
 
 
 # Custom Policy using EquationCNN
-class CustomCNNPolicy(ActorCriticPolicy):
+class CustomCNNPolicy(MaskableActorCriticPolicy):
     """Custom CNN-based Policy for symbolic equation solving."""
     def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
         super().__init__(
@@ -223,8 +224,7 @@ class GNNFeatureExtractor(BaseFeaturesExtractor):
         return self.fc(x)
 
 
-
-class CustomGNNPolicy(ActorCriticPolicy):
+class CustomGNNPolicy(MaskableActorCriticPolicy):
     def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
         super().__init__(
             observation_space,

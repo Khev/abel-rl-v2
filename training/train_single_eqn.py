@@ -192,7 +192,7 @@ def main(args):
 
     # Make env
     env = singleEqn(main_eqn=args.main_eqn, normalize_rewards=args.normalize_rewards, state_rep=args.state_rep)
-    if args.agent_type == "ppo-mask":
+    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn']:
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
 
