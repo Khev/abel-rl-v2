@@ -257,7 +257,7 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
-    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type == 'ppo-gnn':
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type != 'ppo-gnn':
         raise ValueError(
         f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
         f"but got '{args.state_rep}'.\n"

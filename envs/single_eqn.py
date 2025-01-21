@@ -70,9 +70,9 @@ class singleEqn(Env):
         elif state_rep == 'graph_integer_1d' or state_rep == 'graph_integer_2d':
             self.observation_space = spaces.Dict({
                 "node_features": spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_dim, 2), dtype=np.float64),
-                "edge_index": spaces.Box(low=0, high=self.observation_dim, shape=(2, self.observation_dim), dtype=np.int32),
+                "edge_index": spaces.Box(low=0, high=self.observation_dim, shape=(2, 2*self.observation_dim), dtype=np.int32),
                 "node_mask": spaces.Box(low=0, high=1, shape=(self.observation_dim,), dtype=np.int32),
-                "edge_mask": spaces.Box(low=0, high=1, shape=(self.observation_dim,), dtype=np.int32),
+                "edge_mask": spaces.Box(low=0, high=1, shape=(2*self.observation_dim,), dtype=np.int32),
             })
 
         else:

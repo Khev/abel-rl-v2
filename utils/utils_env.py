@@ -569,78 +569,6 @@ def sympy_expression_to_graph(expr, feature_dict):
 
 
 
-def graph_encoding_old(lhs, rhs, feature_dict, max_length):
-    """
-    Convert symbolic equations into graph representations with fixed-size encoding.
-    """
-
-    MAX_NODES, MAX_EDGES = 2*max_length+1, 2*max_length+1
-
-    # Convert expressions to graphs
-    lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
-    rhs_graph = sympy_expression_to_graph(rhs, feature_dict)
-
-    # Compute offsets
-    lhs_offset = lhs_graph.x.shape[0]
-    
-    # Add "=" node **before** RHS
-    eq_node_feature = torch.tensor([[0, 0]], dtype=torch.float)  # "=" symbol
-    eq_node_idx = lhs_offset  # "=" will be inserted at this index
-
-    # Adjust RHS indices since "=" is inserted before it
-    rhs_graph.edge_index += lhs_offset + 1  
-
-    # Merge nodes **in correct order**
-    x = torch.cat([lhs_graph.x, eq_node_feature, rhs_graph.x], dim=0)
-
-    # Merge edges
-    edge_index = torch.cat([lhs_graph.edge_index, rhs_graph.edge_index], dim=1)
-
-    # 🔥 Correct LHS and RHS to "=" edges
-    lhs_last_idx = lhs_offset - 1  # Last node in LHS
-    rhs_start_idx = lhs_offset + 1  # First node in RHS (adjusted for "=")
-
-    # Create connections from last LHS node to "=" and from "=" to first RHS node
-    eq_edges = torch.tensor([[lhs_last_idx, eq_node_idx], [eq_node_idx, rhs_start_idx]], dtype=torch.long).T
-    edge_index = torch.cat([edge_index, eq_edges], dim=1)
-
-    num_nodes = x.shape[0]
-    num_edges = edge_index.shape[1]
-
-    # ✅ Pad node features to MAX_NODES
-    padded_x = torch.full((MAX_NODES, 2), 99, dtype=torch.float)  # 99 is the padding ID
-    padded_x[:num_nodes, :] = x[:MAX_NODES]  # Truncate if too large
-
-    # ✅ Pad edges to MAX_EDGES (self-loops as padding)
-    padded_edge_index = torch.full((2, MAX_EDGES), 0, dtype=torch.long)  # Default to self-loops
-    padded_edge_index[:, :num_edges] = edge_index[:, :MAX_EDGES]  # Truncate if too large
-
-    # ✅ Create masks for valid nodes and edges
-    node_mask = torch.zeros(MAX_NODES, dtype=torch.bool)
-    edge_mask = torch.zeros(MAX_EDGES, dtype=torch.bool)
-    node_mask[:num_nodes] = 1
-    edge_mask[:num_edges] = 1
-
-    vec_dict = {
-        "node_features": padded_x.numpy(),
-        "edge_index": padded_edge_index.numpy(),
-        "node_mask": node_mask.numpy(),
-        "edge_mask": edge_mask.numpy()
-    }
-
-    complexity = 0
-
-    # Debug prints here:
-    print("[graph_encoding] num_nodes:", num_nodes)
-    print("[graph_encoding] num_edges:", num_edges)
-    print("[graph_encoding] edge_index (before pad):", edge_index)
-    # Possibly check if any edges are > num_nodes - 1
-    max_edge_val = edge_index.max().item() if edge_index.numel() > 0 else None
-    print("[graph_encoding] max node index in edges:", max_edge_val)
-
-    return vec_dict, complexity
-
-
 def graph_encoding(lhs, rhs, feature_dict, max_length):
     """
     Convert symbolic equations into graph representations with fixed-size encoding
@@ -648,6 +576,7 @@ def graph_encoding(lhs, rhs, feature_dict, max_length):
     """
 
     MAX_NODES, MAX_EDGES = 2*max_length + 1, 2*max_length + 1
+    MAX_EDGES = 2*MAX_NODES
 
     # 1) Build raw graphs (LHS and RHS)
     lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
