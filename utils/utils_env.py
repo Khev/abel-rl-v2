@@ -568,57 +568,8 @@ def sympy_expression_to_graph(expr, feature_dict):
     return Data(x=x, edge_index=edge_index)
 
 
-def graph_encoding_old(lhs, rhs, feature_dict):
-    """
-    Convert symbolic equations into graph representations.
 
-    Args:
-        lhs (sympy.Expr): Left-hand side expression.
-        rhs (sympy.Expr): Right-hand side expression.
-        feature_dict (dict): Dictionary mapping symbols and operations to encodings.
-
-    Returns:
-        torch_geometric.data.Data: Graph representation of the equation.
-    """
-
-    # Convert expressions to graphs
-    lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
-    rhs_graph = sympy_expression_to_graph(rhs, feature_dict)
-
-    # Compute offsets
-    lhs_offset = lhs_graph.x.shape[0]
-    
-    # Add "=" node **before** RHS
-    eq_node_feature = torch.tensor([[0, 0]], dtype=torch.float)  # "=" symbol
-    eq_node_idx = lhs_offset  # "=" will be inserted at this index
-
-    # Adjust RHS indices since "=" is inserted before it
-    rhs_graph.edge_index += lhs_offset + 1  
-
-    # Merge nodes **in correct order**
-    x = torch.cat([lhs_graph.x, eq_node_feature, rhs_graph.x], dim=0)
-
-    # Merge edges
-    edge_index = torch.cat([lhs_graph.edge_index, rhs_graph.edge_index], dim=1)
-
-    # 🔥 Correct LHS and RHS to "=" edges
-    lhs_last_idx = lhs_offset - 1  # Last node in LHS
-    rhs_start_idx = lhs_offset + 1  # First node in RHS (adjusted for "=")
-
-    # Create connections from last LHS node to "=" and from "=" to first RHS node
-    eq_edges = torch.tensor([[lhs_last_idx, eq_node_idx], [eq_node_idx, rhs_start_idx]], dtype=torch.long).T
-
-    edge_index = torch.cat([edge_index, eq_edges], dim=1)
-
-    complexity = 0
-    return Data(x=x, edge_index=edge_index), complexity
-
-
-import torch
-from torch_geometric.data import Data
-
-
-def graph_encoding(lhs, rhs, feature_dict, max_length):
+def graph_encoding_old(lhs, rhs, feature_dict, max_length):
     """
     Convert symbolic equations into graph representations with fixed-size encoding.
     """
@@ -679,7 +630,114 @@ def graph_encoding(lhs, rhs, feature_dict, max_length):
 
     complexity = 0
 
+    # Debug prints here:
+    print("[graph_encoding] num_nodes:", num_nodes)
+    print("[graph_encoding] num_edges:", num_edges)
+    print("[graph_encoding] edge_index (before pad):", edge_index)
+    # Possibly check if any edges are > num_nodes - 1
+    max_edge_val = edge_index.max().item() if edge_index.numel() > 0 else None
+    print("[graph_encoding] max node index in edges:", max_edge_val)
+
     return vec_dict, complexity
+
+
+def graph_encoding(lhs, rhs, feature_dict, max_length):
+    """
+    Convert symbolic equations into graph representations with fixed-size encoding
+    and safely truncate overflow nodes/edges.
+    """
+
+    MAX_NODES, MAX_EDGES = 2*max_length + 1, 2*max_length + 1
+
+    # 1) Build raw graphs (LHS and RHS)
+    lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
+    rhs_graph = sympy_expression_to_graph(rhs, feature_dict)
+
+    # 2) Insert "=" node between LHS and RHS
+    lhs_offset = lhs_graph.x.shape[0]
+    eq_node_feature = torch.tensor([[0, 0]], dtype=torch.float)  # "=" symbol
+    eq_node_idx = lhs_offset
+
+    # Shift RHS node indices by (lhs_offset + 1)
+    rhs_graph.edge_index += (lhs_offset + 1)
+
+    # Merge node features
+    x = torch.cat([lhs_graph.x, eq_node_feature, rhs_graph.x], dim=0)
+    
+    # Merge edges
+    edge_index = torch.cat([lhs_graph.edge_index, rhs_graph.edge_index], dim=1)
+
+    # Add edges connecting LHS-last-node -> "=" -> RHS-first-node
+    lhs_last_idx = lhs_offset - 1
+    rhs_start_idx = lhs_offset + 1
+    eq_edges = torch.tensor([
+        [lhs_last_idx, eq_node_idx],
+        [eq_node_idx,  rhs_start_idx]
+    ], dtype=torch.long)  # Shape is (2,2)
+
+    # Just concatenate them directly, both 2D:
+    edge_index = torch.cat([edge_index, eq_edges], dim=1)
+
+    # 3) Inspect raw node/edge count
+    raw_num_nodes = x.shape[0]
+    raw_num_edges = edge_index.shape[1]
+    #print("[graph_encoding] raw num_nodes:", raw_num_nodes)
+    #print("[graph_encoding] raw num_edges:", raw_num_edges)
+    #if edge_index.numel() > 0:
+        #print("[graph_encoding] raw edge_index:\n", edge_index)
+        #print("[graph_encoding] raw max node index in edges:", edge_index.max().item())
+
+    # 4) Remove edges that reference nodes >= MAX_NODES
+    #    (since we'll truncate node_features to the first MAX_NODES).
+    valid_edge_mask = (edge_index[0] < MAX_NODES) & (edge_index[1] < MAX_NODES)
+    edge_index = edge_index[:, valid_edge_mask]
+    truncated_num_edges = edge_index.shape[1]
+
+    # 5) Truncate node features if we have more than MAX_NODES
+    if raw_num_nodes > MAX_NODES:
+        x = x[:MAX_NODES]  # keep only the first MAX_NODES
+        truncated_num_nodes = MAX_NODES
+    else:
+        truncated_num_nodes = raw_num_nodes
+
+    # 6) Truncate edges if we have more than MAX_EDGES
+    if truncated_num_edges > MAX_EDGES:
+        edge_index = edge_index[:, :MAX_EDGES]
+        truncated_num_edges = MAX_EDGES
+
+    # 7) Now we pad up to MAX_NODES / MAX_EDGES
+    padded_x = torch.full((MAX_NODES, 2), 99, dtype=torch.float)
+    padded_x[:truncated_num_nodes] = x
+
+    padded_edge_index = torch.full((2, MAX_EDGES), 0, dtype=torch.long)
+    padded_edge_index[:, :truncated_num_edges] = edge_index
+
+    # 8) Create boolean masks indicating which entries are "real"
+    node_mask = torch.zeros(MAX_NODES, dtype=torch.bool)
+    node_mask[:truncated_num_nodes] = True
+
+    edge_mask = torch.zeros(MAX_EDGES, dtype=torch.bool)
+    edge_mask[:truncated_num_edges] = True
+
+    # Optional debug: final shapes
+    #print("[graph_encoding] final truncated_num_nodes:", truncated_num_nodes)
+    #print("[graph_encoding] final truncated_num_edges:", truncated_num_edges)
+    #if truncated_num_edges > 0:
+    #    print("[graph_encoding] final max node index in edges:", padded_edge_index[:,:truncated_num_edges].max().item())
+
+    # 9) Wrap into a dictionary
+    vec_dict = {
+        "node_features": padded_x.numpy(),
+        "edge_index": padded_edge_index.numpy(),
+        "node_mask": node_mask.numpy(),
+        "edge_mask": edge_mask.numpy(),
+    }
+
+    # Example complexity measure (not strictly needed)
+    complexity = 0
+
+    return vec_dict, complexity
+
 
 
 

@@ -25,7 +25,7 @@ class singleEqn(Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, main_eqn='a*x+b', state_rep='integer_encoding', normalize_rewards=True, verbose=False, \
+    def __init__(self, main_eqn='a*x+b', state_rep='integer_1d', normalize_rewards=True, verbose=False, \
          cache=True) -> None:
         super().__init__()
 
@@ -62,15 +62,27 @@ class singleEqn(Env):
         # RL env stuff
         self.state = self.to_vec(self.lhs, self.rhs)
         self.action_space = spaces.Discrete(self.action_dim)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_dim,), dtype=np.float64)
 
+        if state_rep == 'integer_1d':
+            self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_dim,), dtype=np.float64)
+        elif state_rep == 'integer_2d':
+            self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_dim, 2), dtype=np.float64)
+        elif state_rep == 'graph_integer_1d' or state_rep == 'graph_integer_2d':
+            self.observation_space = spaces.Dict({
+                "node_features": spaces.Box(low=-np.inf, high=np.inf, shape=(self.observation_dim, 2), dtype=np.float64),
+                "edge_index": spaces.Box(low=0, high=self.observation_dim, shape=(2, self.observation_dim), dtype=np.int32),
+                "node_mask": spaces.Box(low=0, high=1, shape=(self.observation_dim,), dtype=np.int32),
+                "edge_mask": spaces.Box(low=0, high=1, shape=(self.observation_dim,), dtype=np.int32),
+            })
+
+        else:
+            raise ValueError(f"Unsupported state representation: {state_rep}")
 
 
     def setup(self):
         
         # Ex: {'add':-1,, ... x:1, a:2, ...}
-        self.feature_dict = make_feature_dict(self.main_eqn)
-
+        self.feature_dict = make_feature_dict(self.main_eqn, self.state_rep)
 
         # Define fixed actions directly
         self.actions_fixed = [
@@ -145,6 +157,8 @@ class singleEqn(Env):
 
         if self.verbose:
             print(f'{self.lhs} = {self.rhs}. (Operation,term): {operation_names[operation]}, {term}')
+
+        #print(f'{obs_new} \n')
         
         return obs_new, reward, terminated, truncated, info
 
@@ -162,12 +176,14 @@ class singleEqn(Env):
 
 
     def to_vec(self, lhs, rhs):
-        if self.state_rep == 'integer_encoding':
-            return integer_encoding(lhs, rhs, self.feature_dict, self.max_expr_length)
-        elif self.state_rep == 'expression_graph':
-            raise NotImplementedError("State representation 'expression_graph' is not implemented yet.")
-        elif self.state_rep == 'embedding':
-            raise NotImplementedError("State representation 'embedding' is not implemented yet.")
+        if self.state_rep == 'integer_1d':
+            return integer_encoding_1d(lhs, rhs, self.feature_dict, self.max_expr_length)
+        elif self.state_rep == 'integer_2d':
+            return integer_encoding_2d(lhs, rhs, self.feature_dict, self.max_expr_length)
+        elif self.state_rep == 'graph_integer_1d':
+            return graph_encoding(lhs, rhs, self.feature_dict, self.max_expr_length)  
+        elif self.state_rep == 'graph_integer_2d':
+            return graph_encoding(lhs, rhs, self.feature_dict, self.max_expr_length)  
         else:
             raise ValueError(f"Unknown state representation: {self.state_rep}")
 

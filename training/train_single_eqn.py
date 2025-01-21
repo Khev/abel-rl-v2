@@ -104,10 +104,10 @@ class TrainingLogger(BaseCallback):
         #     print(f"Evaluation Mean Reward: {mean_eval_reward:.2f}\n")
 
         # Save model checkpoint at intervals
-        if self.n_calls % self.eval_interval == 0:
-            save_path = os.path.join(self.save_dir, f"checkpoint_{self.num_timesteps}.zip")
-            self.model.save(save_path)
-            print(f"Checkpoint saved: {save_path}")
+        # if self.n_calls % self.eval_interval == 0:
+        #     save_path = os.path.join(self.save_dir, f"checkpoint_{self.num_timesteps}.zip")
+        #     self.model.save(save_path)
+        #     print(f"Checkpoint saved: {save_path}")
 
         return True  # Continue training
 
@@ -233,19 +233,17 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-mask', choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn'], help='Type of RL agent')
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn'])
     parser.add_argument('--main_eqn', type=str, default='a*x+b', help='Main equation to solv')
-    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
+    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
     parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
+    parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
          default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
     parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
-
-        
 
     args = parser.parse_args()
     
@@ -257,6 +255,15 @@ if __name__ == "__main__":
     if args.save_dir is None:
         args.save_dir = f'data/{args.main_eqn}' if args.main_eqn is not None else f'data/general_eqn'
     os.makedirs(args.save_dir, exist_ok=True)
+
+    # Check for invalid (agent, state_rep pairs)
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type == 'ppo-gnn':
+        raise ValueError(
+        f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
+        f"but got '{args.state_rep}'.\n"
+        f"👉 Fix this by using 'state_rep=graph_integer_2d' in your config."
+    )
+        
 
     T_solve, T_converge = main(args)
 
