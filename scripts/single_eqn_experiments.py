@@ -86,11 +86,12 @@ def main_runner():
     parser.add_argument("--Ntrial", type=int, default=5, help="Number of trials per equation")
     parser.add_argument("--agent_type", type=str, default="ppo-mask", choices=["a2c", "ppo", "dqn"], help="RL agent type")
     parser.add_argument("--parallel", action="store_true", help="Run experiments in parallel")
-    parser.add_argument("--num_workers", type=int, default=2, help="Number of parallel workers")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of parallel workers")
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True, help="Normalize rewards (True/False)")
     parser.add_argument("--log_interval", type=int, default=None, help="Log interval")
     parser.add_argument("--save_dir", type=str, default="data/misc/", help="Directory to save logs")
     parser.add_argument("--intrinsic_reward", type=str, default="ICM", choices=["ICM", "E3B", "RIDE", "None"])
+    parser.add_argument("--state_rep", type=str, default="integer_1d")
 
     args = parser.parse_args()
 

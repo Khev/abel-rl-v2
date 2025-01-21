@@ -191,7 +191,7 @@ def main(args):
     print_parameters(params)
 
     # Make env
-    env = singleEqn(main_eqn=args.main_eqn, normalize_rewards=args.normalize_rewards)
+    env = singleEqn(main_eqn=args.main_eqn, normalize_rewards=args.normalize_rewards, state_rep=args.state_rep)
     if args.agent_type == "ppo-mask":
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
@@ -233,15 +233,19 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-mask', choices=['dqn','a2c','ppo','ppo-mask'], help='Type of RL agent')
+    parser.add_argument('--agent_type', type=str, default='ppo-mask', choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn'], help='Type of RL agent')
     parser.add_argument('--main_eqn', type=str, default='a*x+b', help='Main equation to solv')
+    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
     parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
+                         help='Type of intrinsic reward')
+    parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
+         default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
     parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
-    parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
-                         help='Type of intrinsic reward')
-    parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True, help="Normalize rewards (True/False)")
+
+        
 
     args = parser.parse_args()
     

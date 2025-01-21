@@ -2,21 +2,25 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+import torch
 import numpy as np
 
 from itertools import product
 from functools import lru_cache
 from operator import add, sub, mul, truediv
 from utils.custom_functions import custom_identity
-from sympy import symbols, Basic, Number, simplify, powdenest, ratsimp
+from sympy import symbols, simplify, powdenest, ratsimp, E, I, pi, zoo,  Basic, Number, Integer, Float
 from collections import deque
+from torch_geometric.data import Data
+
+############################################### 1D integer encoding ###############################################
 
 
-def make_feature_dict(main_eqn, encoding='1d_integer'):
+def make_feature_dict(main_eqn, state_rep):
 
-    if encoding == 'integer_1d':
+    if state_rep == 'integer_1d' or state_rep == 'graph_integer_1d':
         return make_feature_dict_integer_1d(main_eqn)
-    elif encoding == 'integer_2d':
+    elif state_rep == 'integer_2d' or state_rep == 'graph_integer_2d':
         return make_feature_dict_integer_2d(main_eqn)
     else:
         raise ValueError(f"Unsupported encoding type: {encoding}")
@@ -64,72 +68,7 @@ def make_feature_dict_integer_1d(main_eqn):
     return feature_dict
 
 
-
-def make_feature_dict_integer_2d(main_eqn):
-    """
-    Generates a dictionary that maps variables, constants, numbers, and operations 
-    in the given equation to a structured 2D encoding.
-
-    Encoding scheme:
-    - Variables: [0, index] (e.g., x → [0, 0])
-    - Constants/Symbols: [1, index] (e.g., a → [1, 0], b → [1, 1])
-    - Numbers/Special Constants: [2, index] (e.g., 0 → [2, 2], '-1' → [2, 0], 'I' → [2, 1])
-    - Operations: [3, index] (e.g., 'add' → [3, 0], 'pow' → [3, 1])
-
-    Example output:
-    ```
-    {
-        x: [0, 0],
-        b: [1, 0],
-        a: [1, 1],
-        '-1': [2, 0],
-        'I': [2, 1],
-        0: [2, 2],
-        1: [2, 3],
-        2: [2, 4],
-        3: [2, 5],
-        'add': [3, 0],
-        'pow': [3, 1],
-        'mul': [3, 2],
-        'sqrt': [3, 3]
-    }
-    ```
-
-    Args:
-        main_eqn (sympy expression): The mathematical equation to extract features from.
-
-    Returns:
-        dict: A dictionary mapping symbols and operations to their respective 2D encodings.
-    """
-
-    feature_dict = {}
-
-    # = is special
-    feature_dict['='] = [0,0]
-
-    # 0: Variables
-    x = symbols('x')
-    variables = [x]
-    feature_dict.update({var: [1, idx] for idx, var in enumerate(variables)})
-
-    # 1: Constants/Symbols (excluding x)
-    symbols_const = sorted(main_eqn.free_symbols - {x}, key=str)  # Sort for consistency
-    feature_dict.update({sym: [2, idx] for idx, sym in enumerate(symbols_const)})
-
-    # 2: Numbers & Special Constants
-    special_constants = ['-1', 'I']
-    real_numbers = list(range(4))  # Adjust this range if needed
-    numbers = special_constants + real_numbers
-    feature_dict.update({num: [3, idx] for idx, num in enumerate(numbers)})
-
-    # 3: Operations
-    operations = ['add', 'pow', 'mul', 'sqrt']
-    feature_dict.update({op: [4, idx] for idx, op in enumerate(operations)})
-
-    return feature_dict
-
-
-def integer_encoding(lhs, rhs, feature_dict, max_length):
+def integer_encoding_1d(lhs, rhs, feature_dict, max_length):
     """
     Convert symbolic expressions into integer-encoded vectors with padding.
 
@@ -391,23 +330,6 @@ def check_valid_eqn(lhs, rhs):
     return True, lhs, rhs
 
 
-# def check_eqn_solved(lhs, rhs, main_eqn):
-
-#     # Solution has to have form (lhs,rhs) = (x, something w/out x) 
-#     x = symbols('x')
-#     if lhs != x:
-#         return False
-
-#     # Check rhs does not have x
-#     if isinstance(rhs, (int, float, Number)) or x not in rhs.free_symbols:
-
-#         # Sub x = rhs into the main_eqn; should be zero
-#         sol = main_eqn.subs(x,rhs)
-#         return sol == 0 or simplify(sol) == 0  # only call simplify if not zero already
-
-#     return False
-
-
 def check_eqn_solved(lhs, rhs, main_eqn):
     """Checks if the equation is solved efficiently."""
     
@@ -442,6 +364,324 @@ def check_eqn_solved(lhs, rhs, main_eqn):
         return False  # Avoid full simplify unless necessary
     
     return False
+
+
+
+######################################## 2D encoding #########################################
+
+def make_feature_dict_integer_2d(main_eqn):
+    """
+    Generates a dictionary that maps variables, constants, numbers, and operations 
+    in the given equation to a structured 2D encoding.
+
+    Encoding scheme:
+    - Variables: [0, index] (e.g., x → [0, 0])
+    - Constants/Symbols: [1, index] (e.g., a → [1, 0], b → [1, 1])
+    - Numbers/Special Constants: [2, index] (e.g., 0 → [2, 2], '-1' → [2, 0], 'I' → [2, 1])
+    - Operations: [3, index] (e.g., 'add' → [3, 0], 'pow' → [3, 1])
+
+    Example output:
+    ```
+    {
+        x: [0, 0],
+        b: [1, 0],
+        a: [1, 1],
+        '-1': [2, 0],
+        'I': [2, 1],
+        0: [2, 2],
+        1: [2, 3],
+        2: [2, 4],
+        3: [2, 5],
+        'add': [3, 0],
+        'pow': [3, 1],
+        'mul': [3, 2],
+        'sqrt': [3, 3]
+    }
+    ```
+
+    Args:
+        main_eqn (sympy expression): The mathematical equation to extract features from.
+
+    Returns:
+        dict: A dictionary mapping symbols and operations to their respective 2D encodings.
+    """
+
+    feature_dict = {}
+
+    # 0: relation, = is special
+    feature_dict['='] = [0,0]
+
+    # 1: Operations
+    operations = ['add', 'pow', 'mul', 'sqrt']
+    feature_dict.update({op: [1, idx] for idx, op in enumerate(operations)})
+
+    # 2: Variables
+    x = symbols('x')
+    variables = [x]
+    feature_dict.update({var: [2, idx] for idx, var in enumerate(variables)})
+
+    # 3: Constants/Symbols (excluding x)
+    symbols_const = sorted(main_eqn.free_symbols - {x}, key=str)  # Sort for consistency
+    feature_dict.update({sym: [3, idx] for idx, sym in enumerate(symbols_const)})
+
+    # 4: Numbers & Special Constants
+    special_constants = [I,E,pi,zoo]
+    feature_dict.update({num: [4, idx] for idx, num in enumerate(special_constants)})
+
+    # 5: Real numbers: added dynamically, so dont need in feature dict
+
+    return feature_dict
+
+
+def sympy_expression_to_list_2d(expr, feature_dict):
+    """
+    Convert a SymPy expression into a list of 2D encodings.
+    
+    Args:
+        expr (sympy.Expr): The symbolic expression to encode.
+        feature_dict (dict): Dictionary mapping symbols and operations to 2D encodings.
+
+    Returns:
+        List[List[int]]: A list of 2D encodings (without padding).
+    """
+
+    stack = [expr]
+    encoded_list = []
+
+    while stack:
+        node = stack.pop()
+
+        if node in feature_dict:
+            encoded_list.append(feature_dict[node])
+        elif isinstance(node, (int, float)):  # ✅ Handle numbers explicitly
+            category_real_numbers = 5
+            encoded_list.append([category_real_numbers, node])
+        elif node.is_Symbol:
+            encoded_list.append(feature_dict.get(node, [99, 99]))  # Use feature_dict encoding
+        else:
+            encoded_list.append(feature_dict.get(node.func.__name__.lower(), [99, 99]))  # Get encoding
+            stack.extend(reversed(node.args))  # Push children to stack
+
+    return encoded_list  # ✅ Returns list of valid encodings only (NO padding!)
+
+
+def integer_encoding_2d(lhs, rhs, feature_dict, max_length):
+    """
+    Convert symbolic expressions into 2D-encoded vectors with fixed-length padding.
+
+    Args:
+        lhs (sympy.Expr): Left-hand side expression.
+        rhs (sympy.Expr): Right-hand side expression.
+        feature_dict (dict): Dictionary mapping symbols and operations to 2D encodings.
+        max_length (int): Maximum allowed length for each expression.
+
+    Returns:
+        np.ndarray: A fixed-length 2D integer vector representing the encoded equation.
+    """
+
+    PAD_ID = [99, 99]  # Padding token
+
+    # ✅ Get valid encodings without padding
+    lhs_encoded = sympy_expression_to_list_2d(lhs, feature_dict)
+    rhs_encoded = sympy_expression_to_list_2d(rhs, feature_dict)
+
+    # ✅ Compute lengths
+    lhs_len, rhs_len = len(lhs_encoded), len(rhs_encoded)
+
+    # ✅ Fixed-size preallocation
+    vector = np.full((2 * max_length + 1, 2), PAD_ID, dtype=np.int32)
+
+    # ✅ Ensure lhs fits
+    lhs_trimmed = lhs_encoded[:max_length]  # Truncate if needed
+    lhs_actual_len = len(lhs_trimmed)
+
+    # ✅ Ensure rhs fits
+    rhs_trimmed = rhs_encoded[:max_length]  # Truncate if needed
+    rhs_actual_len = len(rhs_trimmed)
+
+    # ✅ Place values in the vector
+    vector[:lhs_actual_len] = lhs_trimmed
+    vector[lhs_actual_len] = feature_dict["="]  # Middle separator
+    vector[lhs_actual_len + 1 : lhs_actual_len + 1 + rhs_actual_len] = rhs_trimmed
+
+    complexity = 0
+    return vector, complexity
+
+
+###################################### Graph encoding #######################################
+
+
+def sympy_expression_to_graph(expr, feature_dict):
+    """
+    Convert a SymPy expression into a graph representation for Torch Geometric.
+    
+    Args:
+        expr (sympy.Expr): The symbolic expression to encode.
+        feature_dict (dict): Dictionary mapping symbols and operations to features.
+
+    Returns:
+        torch_geometric.data.Data: Graph representation of the expression.
+    """
+    
+    nodes = []  # List of node indices
+    edges = []  # List of (parent, child) edges
+    node_features = []  # Feature vector for each node
+    node_map = {}  # Maps SymPy nodes to indices
+
+    stack = [(expr, None)]  # (node, parent_index)
+    node_idx = 0
+
+    while stack:
+        node, parent_idx = stack.pop()
+
+        # Assign unique ID to each node
+        if node not in node_map:
+            node_map[node] = node_idx
+            node_idx += 1
+
+        cur_idx = node_map[node]
+        nodes.append(cur_idx)
+
+        # Get feature vector
+        if node in feature_dict:
+            node_features.append(feature_dict[node])
+        elif isinstance(node, (int, float, Integer, Float)):  # Handle numbers
+            node_features.append([5, node])  # Category 5 = real numbers
+        elif node.is_Symbol:
+            node_features.append(feature_dict.get(node, [99, 99]))  # Use feature_dict encoding
+        else:
+            node_features.append(feature_dict.get(node.func.__name__.lower(), [99, 99]))  # Get encoding
+
+        # Connect to parent (if applicable)
+        if parent_idx is not None:
+            edges.append((parent_idx, cur_idx))
+
+        # Push children to stack
+        if not type(node) in [int,float] and node.args:  
+            for child in reversed(node.args):
+                stack.append((child, cur_idx))
+
+    # Convert to Torch Tensors
+    edge_index = torch.tensor(edges, dtype=torch.long).T if edges else torch.empty((2, 0), dtype=torch.long)
+    x = torch.tensor(node_features, dtype=torch.float)
+
+    return Data(x=x, edge_index=edge_index)
+
+
+def graph_encoding_old(lhs, rhs, feature_dict):
+    """
+    Convert symbolic equations into graph representations.
+
+    Args:
+        lhs (sympy.Expr): Left-hand side expression.
+        rhs (sympy.Expr): Right-hand side expression.
+        feature_dict (dict): Dictionary mapping symbols and operations to encodings.
+
+    Returns:
+        torch_geometric.data.Data: Graph representation of the equation.
+    """
+
+    # Convert expressions to graphs
+    lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
+    rhs_graph = sympy_expression_to_graph(rhs, feature_dict)
+
+    # Compute offsets
+    lhs_offset = lhs_graph.x.shape[0]
+    
+    # Add "=" node **before** RHS
+    eq_node_feature = torch.tensor([[0, 0]], dtype=torch.float)  # "=" symbol
+    eq_node_idx = lhs_offset  # "=" will be inserted at this index
+
+    # Adjust RHS indices since "=" is inserted before it
+    rhs_graph.edge_index += lhs_offset + 1  
+
+    # Merge nodes **in correct order**
+    x = torch.cat([lhs_graph.x, eq_node_feature, rhs_graph.x], dim=0)
+
+    # Merge edges
+    edge_index = torch.cat([lhs_graph.edge_index, rhs_graph.edge_index], dim=1)
+
+    # 🔥 Correct LHS and RHS to "=" edges
+    lhs_last_idx = lhs_offset - 1  # Last node in LHS
+    rhs_start_idx = lhs_offset + 1  # First node in RHS (adjusted for "=")
+
+    # Create connections from last LHS node to "=" and from "=" to first RHS node
+    eq_edges = torch.tensor([[lhs_last_idx, eq_node_idx], [eq_node_idx, rhs_start_idx]], dtype=torch.long).T
+
+    edge_index = torch.cat([edge_index, eq_edges], dim=1)
+
+    complexity = 0
+    return Data(x=x, edge_index=edge_index), complexity
+
+
+import torch
+from torch_geometric.data import Data
+
+
+def graph_encoding(lhs, rhs, feature_dict, max_length):
+    """
+    Convert symbolic equations into graph representations with fixed-size encoding.
+    """
+
+    MAX_NODES, MAX_EDGES = 2*max_length+1, 2*max_length+1
+
+    # Convert expressions to graphs
+    lhs_graph = sympy_expression_to_graph(lhs, feature_dict)
+    rhs_graph = sympy_expression_to_graph(rhs, feature_dict)
+
+    # Compute offsets
+    lhs_offset = lhs_graph.x.shape[0]
+    
+    # Add "=" node **before** RHS
+    eq_node_feature = torch.tensor([[0, 0]], dtype=torch.float)  # "=" symbol
+    eq_node_idx = lhs_offset  # "=" will be inserted at this index
+
+    # Adjust RHS indices since "=" is inserted before it
+    rhs_graph.edge_index += lhs_offset + 1  
+
+    # Merge nodes **in correct order**
+    x = torch.cat([lhs_graph.x, eq_node_feature, rhs_graph.x], dim=0)
+
+    # Merge edges
+    edge_index = torch.cat([lhs_graph.edge_index, rhs_graph.edge_index], dim=1)
+
+    # 🔥 Correct LHS and RHS to "=" edges
+    lhs_last_idx = lhs_offset - 1  # Last node in LHS
+    rhs_start_idx = lhs_offset + 1  # First node in RHS (adjusted for "=")
+
+    # Create connections from last LHS node to "=" and from "=" to first RHS node
+    eq_edges = torch.tensor([[lhs_last_idx, eq_node_idx], [eq_node_idx, rhs_start_idx]], dtype=torch.long).T
+    edge_index = torch.cat([edge_index, eq_edges], dim=1)
+
+    num_nodes = x.shape[0]
+    num_edges = edge_index.shape[1]
+
+    # ✅ Pad node features to MAX_NODES
+    padded_x = torch.full((MAX_NODES, 2), 99, dtype=torch.float)  # 99 is the padding ID
+    padded_x[:num_nodes, :] = x[:MAX_NODES]  # Truncate if too large
+
+    # ✅ Pad edges to MAX_EDGES (self-loops as padding)
+    padded_edge_index = torch.full((2, MAX_EDGES), 0, dtype=torch.long)  # Default to self-loops
+    padded_edge_index[:, :num_edges] = edge_index[:, :MAX_EDGES]  # Truncate if too large
+
+    # ✅ Create masks for valid nodes and edges
+    node_mask = torch.zeros(MAX_NODES, dtype=torch.bool)
+    edge_mask = torch.zeros(MAX_EDGES, dtype=torch.bool)
+    node_mask[:num_nodes] = 1
+    edge_mask[:num_edges] = 1
+
+    vec_dict = {
+        "node_features": padded_x.numpy(),
+        "edge_index": padded_edge_index.numpy(),
+        "node_mask": node_mask.numpy(),
+        "edge_mask": edge_mask.numpy()
+    }
+
+    complexity = 0
+
+    return vec_dict, complexity
+
+
 
 
 
