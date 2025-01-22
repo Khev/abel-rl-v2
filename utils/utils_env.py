@@ -671,4 +671,100 @@ def graph_encoding(lhs, rhs, feature_dict, max_length):
 
 
 
+##############################################################################################################
+# Multi-Equation Feature Dictionary
+##############################################################################################################
 
+
+def make_feature_dict_multi(train_eqns, test_eqns, state_rep):
+    """Chooses the correct feature dictionary function based on `state_rep`."""
+    
+    if state_rep in {'integer_1d', 'graph_integer_1d'}:
+        return make_feature_dict_integer_1d_multi(train_eqns, test_eqns)
+    elif state_rep in {'integer_2d', 'graph_integer_2d'}:
+        return make_feature_dict_integer_2d_multi(train_eqns, test_eqns)
+    else:
+        raise ValueError(f"Unsupported encoding type: {state_rep}")
+
+
+def make_feature_dict_integer_1d_multi(train_eqns, test_eqns):
+    """
+    Generate a feature dictionary mapping symbols, numbers, and operations to unique integers.
+
+    Args:
+        train_eqns (list): List of training equations (SymPy expressions).
+        test_eqns (list): List of testing equations (SymPy expressions).
+
+    Returns:
+        dict: A dictionary mapping elements to integer encodings.
+    """
+
+    # Aggregate free symbols from ALL equations in train and test sets
+    free_symbols = set()
+    for eqn in train_eqns + test_eqns:
+        free_symbols.update(eqn.free_symbols)
+
+    # Special constants & numbers
+    special_constants = [-1, I, E, pi, zoo]
+    small_integers = list(range(4))  # e.g., 0,1,2,3
+    all_symbols = list(free_symbols) + special_constants + small_integers
+
+    # Initialize feature dictionary
+    x = symbols('x')
+    feature_dict = {'=': 0, x: 1}
+    ctr = 2
+
+    # Add all symbols
+    for symbol in all_symbols:
+        if symbol not in feature_dict:
+            feature_dict[symbol] = ctr
+            ctr += 1
+
+    # Add operations
+    operations = ['add', 'pow', 'mul', 'sqrt']
+    for idx, operation in enumerate(operations, start=-1):
+        feature_dict[operation] = idx
+
+    return feature_dict
+
+
+
+def make_feature_dict_integer_2d_multi(train_eqns, test_eqns):
+    """
+    Generates a dictionary that maps variables, constants, numbers, and operations 
+    in the given set of equations to a structured 2D encoding.
+
+    Encoding scheme:
+    - Variables: [2, index] (e.g., x → [2, 0])
+    - Constants/Symbols: [3, index] (e.g., a → [3, 0], b → [3, 1])
+    - Numbers/Special Constants: [4, index] (e.g., 0 → [4, 2], '-1' → [4, 0], 'I' → [4, 1])
+    - Operations: [1, index] (e.g., 'add' → [1, 0], 'pow' → [1, 1])
+    """
+
+    feature_dict = {}
+
+    # 0: Relation '='
+    feature_dict['='] = [0, 0]
+
+    # 1: Operations
+    operations = ['add', 'pow', 'mul', 'sqrt']
+    feature_dict.update({op: [1, idx] for idx, op in enumerate(operations)})
+
+    # 2: Variables (Ensure 'x' is always present)
+    x = symbols('x')
+    feature_dict[x] = [2, 0]
+
+    # 3: Constants/Symbols (excluding x)
+    symbols_const = set()
+    for eqn in train_eqns + test_eqns:
+        symbols_const.update(eqn.free_symbols)
+
+    # Remove 'x' since it's categorized separately
+    symbols_const.discard(x)
+    feature_dict.update({sym: [3, idx] for idx, sym in enumerate(sorted(symbols_const, key=str))})
+
+    # 4: Numbers & Special Constants
+    special_constants = [-1, I, E, pi, zoo]
+    feature_dict.update({num: [4, idx] for idx, num in enumerate(special_constants)})
+
+    return feature_dict
