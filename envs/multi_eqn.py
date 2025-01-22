@@ -26,7 +26,7 @@ class multiEqn(Env):
     metadata = {"render_modes": ["human"]}
 
     def __init__(self, state_rep='integer_1d', normalize_rewards=True, verbose=False, \
-         cache=True) -> None:
+         cache=False, level=0, generalization='shallow') -> None:
         super().__init__()
 
         # Static parts
@@ -51,10 +51,15 @@ class multiEqn(Env):
         self.verbose = verbose
 
         # Set train/test equations
-        self.train_eqns = ['a*x+b', 'b*x+c', 'c*x+d', 'd*x+e', 'e*x+a']
-        self.test_eqns = ['b*x+a', 'c*x+b', 'd*x+c', 'e*x+d', 'a*x+e']
-        self.train_eqns = [sympify(e) for e in self.train_eqns]
-        self.test_eqns = [sympify(e) for e in self.test_eqns]
+        self.level = level
+        self.generalization = generalization
+        eqn_dirn = f"equation_templates"
+        self.train_eqns, self.test_eqns = load_train_test_equations(eqn_dirn, level, generalization=generalization)
+
+        #self.train_eqns = ['a*x+b', 'b*x+c', 'c*x+d', 'd*x+e', 'e*x+a']
+        #self.test_eqns = ['b*x+a', 'c*x+b', 'd*x+c', 'e*x+d', 'a*x+e']
+        #self.train_eqns = [sympify(e) for e in self.train_eqns]
+        #self.test_eqns = [sympify(e) for e in self.test_eqns]
         
         # Set main equation to solve
         self.main_eqn = np.random.choice(self.train_eqns)
@@ -118,7 +123,7 @@ class multiEqn(Env):
             action_list, action_mask = make_actions_cache(lhs_old, rhs_old, self.actions_fixed, \
                  self.action_dim, self.action_cache)
         else:
-            action_list, action_mask = make_actions_cache(lhs_old, rhs_old, self.actions_fixed, self.action_dim)
+            action_list, action_mask = make_actions(lhs_old, rhs_old, self.actions_fixed, self.action_dim)
 
         self.actions = action_list
         self.action_mask = action_mask
@@ -168,10 +173,11 @@ class multiEqn(Env):
         
         return obs_new, reward, terminated, truncated, info
 
+    def set_equation(self,main_eqn):
+        self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
+        
 
-    def reset(self, seed=0, options=None):
-
-        # Pick a new rain
+    def reset(self, seed=0, options=None, main_eqn=None):
         main_eqn = np.random.choice(self.train_eqns)
         self.current_steps = 0
         self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0

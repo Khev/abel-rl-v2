@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import argparse, json, pickle
+import argparse, json, pickle, time
 import numpy as np
 import torch as th
 import pandas as pd
@@ -25,11 +25,11 @@ from colorama import Fore, Style
 
 device = get_device()
 
-def print_eval_results(test_results):
+def print_eval_results(test_results, label=""):
     """
     test_results is a dict: { eqn_string : success_rate_float, ... }
     """
-    print("\nTest Equation Win% Results (Pandas Table):")
+    print(f"{label} Equations")
     # Convert dict to a DataFrame with columns = ['Eqn', 'Win%']
     df = pd.DataFrame(
         [{'Eqn': eqn, 'Win%': f"{winpct:.1f}%"} for eqn, winpct in test_results.items()]
@@ -42,7 +42,7 @@ def print_results_dict_as_df(title, d):
     d is presumably { eqn_str: Tsolve_step or None }.
     We'll convert to a DataFrame with columns ['Eqn', 'TSolve'].
     """
-    print(f"\n{title} (Pandas Table):")
+    print(f"\n{title}")
     rows = []
     for eqn, tsolve in d.items():
         rows.append({'Eqn': eqn, 'TSolve': tsolve})
@@ -67,6 +67,8 @@ def evaluate_agent(agent, env, equation_list, n_eval_episodes=10):
             # Ensure we reset correctly in DummyVecEnv
             #obs, _ = env.get_attr('reset')[0]() if hasattr(env, 'get_attr') else env.reset()
             obs = env.reset()
+            env.env_method('set_equation', eqn)
+            #breakpoint()
             done = False
             while not done:
                 action, _ = agent.predict(obs, deterministic=False)
@@ -130,6 +132,18 @@ class TrainingLogger(BaseCallback):
         else:
             print("No 'test_eqns' found in env. results_test will remain empty.")
 
+        if self.eval_env:
+            print("\nInitial evaluation (t=0)...")
+            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
+            print_eval_results(train_results, label="Train")
+
+            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
+            print_eval_results(test_results, label="Test")
+
+            self.logged_steps.append(0)  # Log step 0
+            self.train_accuracy.append(np.mean(list(train_results.values())))
+            self.test_accuracy.append(np.mean(list(test_results.values())))
+
     def _on_step(self) -> bool:
         """
         This function is called at each step of training.
@@ -168,15 +182,22 @@ class TrainingLogger(BaseCallback):
 
             print("\nRunning evaluation...")
             train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
-            print_eval_results(train_results)
+            print_eval_results(train_results, label='Train')
 
             test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
-            print_eval_results(test_results)
-            self.results_test = test_results
+            print_eval_results(test_results, label='Test')
 
             self.logged_steps.append(self.num_timesteps)
+            train_acc = np.mean(list(train_results.values()))
+            test_acc = np.mean(list(test_results.values()))
             self.train_accuracy.append(np.mean(list(train_results.values())))
             self.test_accuracy.append(np.mean(list(test_results.values())))
+
+            # Early stopping
+            if test_acc == 100.0 and train_acc == 100.0:
+                print(Fore.YELLOW + f"'train_acc = test_acc = 100. Early stopping step {self.num_timesteps}!" + Style.RESET_ALL)
+                return False
+
 
         # Save model checkpoint at intervals
         # if self.n_calls % self.eval_interval == 0:
@@ -290,13 +311,16 @@ class IntrinsicReward(BaseCallback):
 
 def main(args):
 
+    t1 = time.time()
+
     # Print out args
     print('\n')
     params = vars(args)
     print_parameters(params)
 
     # Make env
-    env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep)
+    env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
+         generalization=args.generalization)
     if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn']:
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
@@ -325,20 +349,29 @@ def main(args):
     print_header('Evaluating trained agent', color='cyan')
     train_results = evaluate_agent(agent, env, env.get_attr('train_eqns')[0], n_eval_episodes=10)
     test_results = evaluate_agent(agent, env, env.get_attr('test_eqns')[0], n_eval_episodes=10)
-    print_eval_results(test_results)
+
+    print_eval_results(train_results, label='Train')
+    print_eval_results(test_results, label='Test')
 
     # Extract info
     if type(callback) == list:
         callback = callback[0]
     results_train, results_test = callback.results_train, callback.results_test
 
-    # Print these
+    # Print results
     print_header(f"Final results", color='cyan')
     print_results_dict_as_df("Training Results", results_train)
-    print_results_dict_as_df("Testing Results", results_test)
+    # print_results_dict_as_df("Testing Results", results_test)
+
+    # Run time
+    t2 = time.time()
+    elapsed_time = t2 - t1
+    hours, rem = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print(f"Training completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
 
 
-    return results_train, results_test 
+    return train_results, test_results 
 
 
 if __name__ == "__main__":
@@ -354,13 +387,18 @@ if __name__ == "__main__":
     parser.add_argument('--save_dir', type=str, default='data/generalize', help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
 
+    # Generalization parameters
+    parser.add_argument('--level', type=int, default=0)
+    parser.add_argument('--generalization', type=str, default='deep',choices=['shallow','deep'])
+
     args = parser.parse_args()
     
     # Set default log_interval if not provided
     if args.log_interval is None:
-        args.log_interval = min(int(0.1 * args.Ntrain), 10**4)
+        args.log_interval = min(int(0.1 * args.Ntrain), 10**4)    
     
     # Set save_dir
+    args.save_dir = os.path.join(args.save_dir, f"level{args.level}")
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
@@ -370,6 +408,9 @@ if __name__ == "__main__":
         f"but got '{args.state_rep}'.\n"
         f"👉 Fix this by using 'state_rep=graph_integer_2d' in your config."
     )
+
+    print(f"Results saved to {args.save_dir}")
+
         
 
     results_train, results_test = main(args)

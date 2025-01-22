@@ -9,11 +9,12 @@ from itertools import product
 from functools import lru_cache
 from operator import add, sub, mul, truediv
 from utils.custom_functions import custom_identity
-from sympy import symbols, simplify, powdenest, ratsimp, E, I, pi, zoo,  Basic, Number, Integer, Float
+from sympy import symbols, sympify, simplify, powdenest, ratsimp, E, I, pi, zoo,  Basic, Number, Integer, Float
 from collections import deque
 from torch_geometric.data import Data
 
 ############################################### 1D integer encoding ###############################################
+
 
 
 def make_feature_dict(main_eqn, state_rep):
@@ -768,3 +769,69 @@ def make_feature_dict_integer_2d_multi(train_eqns, test_eqns):
     feature_dict.update({num: [4, idx] for idx, num in enumerate(special_constants)})
 
     return feature_dict
+
+
+
+
+################################# MULTIEQNS ###############################################
+
+
+# def load_train_test_equations(dirn, level):
+#     """
+#     Loads train and test equations for a given level from the stored text files.
+#     Returns lists of sympified equations.
+#     """
+#     level_dir = os.path.join(dirn, f"level{level}")
+
+#     train_eqns_path = os.path.join(level_dir, "train_eqns.txt")
+#     test_eqns_path = os.path.join(level_dir, "test_eqns.txt")
+
+#     if not os.path.exists(train_eqns_path) or not os.path.exists(test_eqns_path):
+#         raise FileNotFoundError(f"Train or test equation file not found for level {level} in {level_dir}")
+
+#     # Read and sympify each equation
+#     with open(train_eqns_path, "r") as f:
+#         train_eqns = [sympify(line.strip()) for line in f.readlines()]
+
+#     with open(test_eqns_path, "r") as f:
+#         test_eqns = [sympify(line.strip()) for line in f.readlines()]
+
+#     return train_eqns, test_eqns
+
+
+
+def load_train_test_equations(dirn, level, generalization="shallow"):
+    """
+    Loads train and test equations for a given level from the stored text files.
+    Supports both "shallow" and "deep" generalization.
+    
+    Parameters:
+        dirn (str): Base directory where equation templates are stored.
+        level (int): The level of equations to load.
+        generalization (str): Either "shallow" or "deep" to load respective datasets.
+
+    Returns:
+        train_eqns (list): List of sympified train equations.
+        test_eqns (list): List of sympified test equations.
+    """
+    if generalization not in ["shallow", "deep"]:
+        raise ValueError(f"Invalid generalization type '{generalization}'. Choose 'shallow' or 'deep'.")
+
+    # Construct path based on generalization type
+    level_dir = os.path.join(dirn, generalization, f"level{level}")
+
+    train_eqns_path = os.path.join(level_dir, "train_eqns.txt")
+    test_eqns_path = os.path.join(level_dir, "test_eqns.txt")
+
+    if not os.path.exists(train_eqns_path) or not os.path.exists(test_eqns_path):
+        raise FileNotFoundError(f"Train or test equation file not found for level {level} in {level_dir}")
+
+    # Read and sympify each equation
+    with open(train_eqns_path, "r") as f:
+        train_eqns = [sympify(line.strip()) for line in f.readlines()]
+
+    with open(test_eqns_path, "r") as f:
+        test_eqns = [sympify(line.strip()) for line in f.readlines()]
+
+    return train_eqns, test_eqns
+

@@ -26,7 +26,7 @@ class singleEqn(Env):
     metadata = {"render_modes": ["human"]}
 
     def __init__(self, main_eqn='a*x+b', state_rep='integer_1d', normalize_rewards=True, verbose=False, \
-         cache=True) -> None:
+         cache=False) -> None:
         super().__init__()
 
         # Static parts
@@ -112,7 +112,7 @@ class singleEqn(Env):
             action_list, action_mask = make_actions_cache(lhs_old, rhs_old, self.actions_fixed, \
                  self.action_dim, self.action_cache)
         else:
-            action_list, action_mask = make_actions_cache(lhs_old, rhs_old, self.actions_fixed, self.action_dim)
+            action_list, action_mask = make_actions(lhs_old, rhs_old, self.actions_fixed, self.action_dim)
 
         self.actions = action_list
         self.action_mask = action_mask
@@ -172,7 +172,7 @@ class singleEqn(Env):
 
 
     def render(self, mode: str = "human"):
-        print(f'{env.lhs} = {env.rhs}')
+        print(f'{self.lhs} = {self.rhs}')
 
 
     def to_vec(self, lhs, rhs):
