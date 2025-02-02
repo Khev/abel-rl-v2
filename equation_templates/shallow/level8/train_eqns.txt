@@ -1,0 +1,18 @@
+a*x
+b*x
+x + a
+x + b
+a*x + b
+c*x + c
+a/x + b
+c/x + c
+c*(a*x + b) + d
+e*(e*x + e) + e
+sqrt(a*x+b) - c
+sqrt(d*x+d) - d
+(a*x**2+b)**2 + c
+(d*x**2+d)**2 + d
+d/(a*x + b) + c
+e/(e*x + e) + e
+e*(a*x + b) + (c*x + d)
+a*(a*x + a) + (a*x + a)

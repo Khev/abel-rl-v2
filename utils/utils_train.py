@@ -40,7 +40,7 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, **kwargs)
+        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs)
     }
     
     if agent_type not in agents:

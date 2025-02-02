@@ -7,8 +7,8 @@ eqns = [
     "a*x + b",
     "a/x + b",
     "c*(a*x + b) + d",
-    "sqrt(a*x+b) - c",
-    "(a*x**2+b)**2 + c",
+    # "sqrt(a*x+b) - c",
+    # "(a*x**2+b)**2 + c",
     "d/(a*x + b) + c",
     "e*(a*x + b) + (c*x + d)",
     "(a*x + b)/(c*x + d) + e"

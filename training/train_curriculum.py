@@ -160,11 +160,6 @@ class TrainingLogger(BaseCallback):
         self.train_accuracy = []
         self.test_accuracy = []
 
-        self.train_accuracy_one_shot = []
-        self.test_accuracy_one_shot = []
-
-        self.max_test_acc_one_shot = 0.0
-
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
@@ -199,24 +194,8 @@ class TrainingLogger(BaseCallback):
             print_eval_results(test_results, label="Test")
 
             self.logged_steps.append(0)  # Log step 0
-
-            train_acc = np.mean(list(train_results.values()))
-            test_acc = np.mean(list(test_results.values()))
             self.train_accuracy.append(np.mean(list(train_results.values())))
             self.test_accuracy.append(np.mean(list(test_results.values())))
-
-            train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
-            test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
-            self.train_accuracy_one_shot.append(train_acc_one_shot)
-            self.test_accuracy_one_shot.append(test_acc_one_shot)
-            self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
-
-    
-            print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
-            print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
-            print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
-
-
 
     def _on_step(self) -> bool:
         """
@@ -263,21 +242,10 @@ class TrainingLogger(BaseCallback):
             print_eval_results(test_results, label='Test')
 
             self.logged_steps.append(self.num_timesteps)
-
             train_acc = np.mean(list(train_results.values()))
             test_acc = np.mean(list(test_results.values()))
             self.train_accuracy.append(np.mean(list(train_results.values())))
             self.test_accuracy.append(np.mean(list(test_results.values())))
-
-            train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
-            test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
-            self.train_accuracy_one_shot.append(train_acc_one_shot)
-            self.test_accuracy_one_shot.append(test_acc_one_shot)
-
-            self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
-            print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
-            print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
-            print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
 
             # Early stopping
             if test_acc == 100.0 and train_acc == 100.0:
@@ -301,14 +269,8 @@ class TrainingLogger(BaseCallback):
         print("\nFinal Training Completed. Plotting Learning Curves...")
 
         plt.figure(figsize=(10, 6))
-        plt.plot(self.logged_steps, self.train_accuracy, label="Train Accuracy", 
-                marker='o', linestyle='-', color='b', markersize=6, linewidth=2)
-        plt.plot(self.logged_steps, self.test_accuracy, label="Test Accuracy", 
-                marker='s', linestyle='--', color='r', markersize=6, linewidth=2)
-        plt.plot(self.logged_steps, self.train_accuracy_one_shot, label="Train Accuracy (1-shot)", 
-                marker='D', linestyle='-.', color='g', markersize=6, linewidth=2)
-        plt.plot(self.logged_steps, self.test_accuracy_one_shot, label="Test Accuracy (1-shot)", 
-                marker='^', linestyle=':', color='m', markersize=6, linewidth=2)
+        plt.plot(self.logged_steps, self.train_accuracy, label="Train Accuracy", marker='o', linestyle='-')
+        plt.plot(self.logged_steps, self.test_accuracy, label="Test Accuracy", marker='s', linestyle='--')
 
         plt.xlabel("Training Steps")
         plt.ylabel("Success Rate (%)")
@@ -327,10 +289,7 @@ class TrainingLogger(BaseCallback):
             pickle.dump({
                 "steps": self.logged_steps,
                 "train_success": self.train_accuracy,
-                "train_success_one_shot": self.train_accuracy_one_shot,
-                "test_success": self.test_accuracy,
-                "test_success_one_shot": self.test_accuracy_one_shot
-
+                "test_success": self.test_accuracy
             }, f)
         print(f"Saved learning progress to {save_path}")
 
@@ -481,10 +440,8 @@ def main(args):
     minutes, seconds = divmod(rem, 60)
     print(f"Training completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
 
-    # extract off max
-    max_test_acc_one_shot = callback.max_test_acc_one_shot = 0.0
 
-    return train_results, test_results, max_test_acc_one_shot
+    return train_results, test_results 
 
 
 if __name__ == "__main__":
@@ -501,15 +458,15 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', type=int, default=0)
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=2)
+    parser.add_argument('--level', type=int, default=1)
     parser.add_argument('--generalization', type=str, default='shallow',choices=['shallow','deep'])
 
     args = parser.parse_args()
     
     # Set default log_interval if not provided
     if args.log_interval is None:
-        args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
-        #args.log_interval = int(0.1 * args.Ntrain)
+        #args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
+        args.log_interval = int(0.1 * args.Ntrain)
     
     # Set save_dir
     args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}")
@@ -527,7 +484,7 @@ if __name__ == "__main__":
 
         
 
-    results_train, results_test, max_test_acc_one_shot = main(args)
+    results_train, results_test = main(args)
 
 
 

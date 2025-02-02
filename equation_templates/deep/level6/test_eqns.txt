@@ -1,0 +1,40 @@
+f*x
+g*x
+h*x
+i*x
+j*x
+x + f
+x + g
+x + h
+x + i
+x + j
+f*x + g
+g*x + h
+h*x + i
+i*x + j
+j*x + f
+f/x + g
+g/x + h
+h/x + i
+i/x + j
+j/x + f
+h*(f*x + g) + i
+i*(g*x + h) + j
+j*(h*x + i) + f
+f*(i*x + j) + g
+g*(j*x + f) + h
+sqrt(f*x+g) - h
+sqrt(g*x+h) - i
+sqrt(h*x+i) - j
+sqrt(i*x+j) - f
+sqrt(j*x+f) - g
+(f*x**2+g)**2 + h
+(g*x**2+h)**2 + i
+(h*x**2+i)**2 + j
+(i*x**2+j)**2 + f
+(j*x**2+f)**2 + g
+i/(f*x + g) + h
+j/(g*x + h) + i
+f/(h*x + i) + j
+g/(i*x + j) + f
+h/(j*x + f) + g

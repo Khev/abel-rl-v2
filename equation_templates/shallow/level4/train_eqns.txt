@@ -1,0 +1,10 @@
+a*x
+b*x
+x + a
+x + b
+a*x + b
+c*x + c
+a/x + b
+c/x + c
+c*(a*x + b) + d
+e*(e*x + e) + e

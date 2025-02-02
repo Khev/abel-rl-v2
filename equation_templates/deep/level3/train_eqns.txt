@@ -1,0 +1,20 @@
+a*x
+b*x
+c*x
+d*x
+e*x
+x + a
+x + b
+x + c
+x + d
+x + e
+a*x + b
+c*x + c
+c*x + d
+d*x + e
+e*x + a
+a/x + b
+c/x + c
+c/x + d
+d/x + e
+e/x + a

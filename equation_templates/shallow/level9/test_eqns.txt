@@ -1,0 +1,20 @@
+f*x
+g*x
+x + f
+x + g
+f*x + g
+g*x + h
+f/x + g
+g/x + h
+h*(f*x + g) + i
+i*(g*x + h) + j
+sqrt(f*x+g) - h
+sqrt(g*x+h) - i
+(f*x**2+g)**2 + h
+(g*x**2+h)**2 + i
+i/(f*x + g) + h
+j/(g*x + h) + i
+j*(f*x + g) + (h*x + i)
+f*(g*x + h) + (i*x + j)
+(f*x + g)/(h*x + i) + j
+(g*x + h)/(i*x + j) + f

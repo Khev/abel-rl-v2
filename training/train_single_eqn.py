@@ -154,6 +154,7 @@ class IntrinsicReward(BaseCallback):
         """
         Efficiently compute intrinsic rewards once per rollout and store them.
         """
+        breakpoint()
         obs = th.as_tensor(self.buffer.observations).float()
         new_obs = obs.clone()
         new_obs[:-1] = obs[1:]
@@ -242,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
          default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
-    parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the results')
+    parser.add_argument('--save_dir', type=str, default='data/misc', help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
 
     args = parser.parse_args()

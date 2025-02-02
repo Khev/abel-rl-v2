@@ -1,3 +1,9 @@
+"""
+Script to run reinforcement learning experiments for solving equations.
+Runs multiple trials per equation, computes min/mean/max Tsolve.
+Supports parallel and sequential execution.
+"""
+
 import sys
 import os
 import argparse
@@ -5,32 +11,29 @@ import json
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
-import time
-from datetime import datetime, timedelta
-from colorama import Fore, Style
 
 # Add parent directory to Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from training.train_single_eqn import main
 
+
 # --------------------------------------
-# Training function (with checkpointing)
+# Training function
 # --------------------------------------
 def train_equation(params):
-    """Runs the training process for a given equation with multiple trials and saves results incrementally."""
+    """Runs the training process for a given equation with multiple trials."""
     main_eqn, args = params
     print(f"\n🚀 Starting training for: {main_eqn}")
-    
-    start_time = time.time()
-    Tsolve_trials = []
 
+    Tsolve_trials = []
     for trial in range(args.Ntrial):
         print(f"   🎲 Trial {trial + 1}/{args.Ntrial} for {main_eqn}...")
         args.main_eqn = main_eqn  # Set the equation for the current trial
         Tsolve, _ = main(args)  # Run training
         if Tsolve is not None:
             Tsolve_trials.append(int(Tsolve))  # 🔹 Convert np.int64 → Python int
-    
+
     # Handle case where all trials return None
     if not Tsolve_trials:
         results = {
@@ -48,22 +51,6 @@ def train_equation(params):
             "Max Tsolve": int(np.max(Tsolve_trials)),  # 🔹 Convert to int
             "Trials": [int(t) for t in Tsolve_trials]  # 🔹 Convert all elements to int
         }
-    
-    end_time = time.time()
-    elapsed_time = timedelta(seconds=int(end_time - start_time))
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(Fore.RED + f"[{timestamp}] {main_eqn} took {elapsed_time}" + Style.RESET_ALL)
-    
-    # 🔹 Save checkpoint after each equation finishes
-    checkpoint_path = os.path.join(args.save_dir, f"results_{args.agent_type}.csv")
-    df_checkpoint = pd.DataFrame([results])
-
-    if os.path.exists(checkpoint_path):
-        df_checkpoint.to_csv(checkpoint_path, mode="a", header=False, index=False)  # Append without headers
-    else:
-        df_checkpoint.to_csv(checkpoint_path, index=False)  # Create new file
-
-    print(Fore.YELLOW + f"📂 Checkpoint saved: {checkpoint_path}" + Style.RESET_ALL)
 
     return main_eqn, results
 
@@ -97,43 +84,33 @@ def main_runner():
     parser = argparse.ArgumentParser(description="Run RL experiments on different equations.")
     parser.add_argument("--Ntrain", type=int, default=3*10**6, help="Number of training steps")
     parser.add_argument("--Ntrial", type=int, default=5, help="Number of trials per equation")
-    parser.add_argument("--agent_type", type=str, default="ppo-gnn", choices=["a2c", "ppo", "dqn", "ppo-gnn"], help="RL agent type")
+    parser.add_argument("--agent_type", type=str, default="ppo-mask", choices=["a2c", "ppo", "dqn"], help="RL agent type")
     parser.add_argument("--parallel", action="store_true", help="Run experiments in parallel")
-    parser.add_argument("--num_workers", type=int, default=6, help="Number of parallel workers")
+    parser.add_argument("--num_workers", type=int, default=2, help="Number of parallel workers")
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), default=True, help="Normalize rewards (True/False)")
     parser.add_argument("--log_interval", type=int, default=None, help="Log interval")
-    parser.add_argument("--save_dir", type=str, default="data/Tsolve_baseline/", help="Directory to save logs")
-    parser.add_argument("--intrinsic_reward", type=str, default="None", choices=["ICM", "E3B", "RIDE", "None"])
-    parser.add_argument("--state_rep", type=str, default="graph_integer_2d")
-    
+    parser.add_argument("--save_dir", type=str, default="data/misc/", help="Directory to save logs")
+    parser.add_argument("--intrinsic_reward", type=str, default="ICM", choices=["ICM", "E3B", "RIDE", "None"])
+    parser.add_argument("--state_rep", type=str, default="integer_1d")
+
     args = parser.parse_args()
-    
+
     # Set default log_interval if not provided
     if args.log_interval is None:
-        args.log_interval = int(0.1 * args.Ntrain)
+        args.log_interval = min(int(0.1 * args.Ntrain), 10**5)
 
-    args.save_dir = os.path.join(args.save_dir, args.agent_type + '_ent_coeff')
-    os.makedirs(args.save_dir, exist_ok=True)
 
-    # Save experiment details
-    args_dict = vars(args)
-    json_path = os.path.join(args.save_dir, f"experiment_details.json")
-    with open(json_path, "w") as f:
-        json.dump(args_dict, f, indent=4)
-    print(f"\n📂 Experiment details saved to JSON: {json_path}")
-    
     # --------------------------------------
     # Define equations to test
     # --------------------------------------
     MAIN_EQNS = [
         "a*x", "x + b", "a*x + b", "a/x + b", "c*(a*x + b) + d",
-        "sqrt(a*x+b) - c", "(a*x**2+b)**2 + c", "d/(a*x + b) + c", "e*(a*x + b) + (c*x + d)",
+        "sqrt(a*x+b) - c",  "(a*x**2+b)**2 + c", "d/(a*x + b) + c", "e*(a*x + b) + (c*x + d)",
         "(a*x + b)/(c*x + d) + e"
-    ]
-    
+    ][-2:]
+
     print("\n🧪 Running experiments for multiple equations...")
-    overall_start_time = time.time()
-    
+
     # Run experiments in parallel or sequentially
     if args.parallel:
         print(f"🌍 Running in PARALLEL mode with {args.num_workers} workers...")
@@ -141,21 +118,24 @@ def main_runner():
     else:
         print("🛠 Running in SEQUENTIAL mode...")
         results = run_sequential(MAIN_EQNS, args)
-    
-    overall_end_time = time.time()
-    overall_elapsed_time = timedelta(seconds=int(overall_end_time - overall_start_time))
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(Fore.RED + f"[{timestamp}] ✅ Entire process took {overall_elapsed_time}" + Style.RESET_ALL)
-    
+
     # --------------------------------------
-    # Final Save
+    # Format and save results
     # --------------------------------------
-    final_csv_path = os.path.join(args.save_dir, f"results_{args.agent_type}.csv")
     df_results = pd.DataFrame.from_dict(results, orient="index")
 
-    # Overwrite final CSV to ensure all results are properly formatted
-    df_results.to_csv(final_csv_path, index=False)
-    print(f"\n📂 Final results saved to: {final_csv_path}")
+    print('\n' + 50*'-')
+    print('Old sorting method')
+    print(50*'-' + '\n')
+
+    print("\n📊 Training Results:")
+    print(df_results.to_string(index=False))  # Pretty print table
+
+    # Save
+    os.makedirs(args.save_dir, exist_ok=True)
+    csv_path = os.path.join(args.save_dir, f"results_{args.agent_type}.csv")
+    df_results.to_csv(csv_path, index=False)
+    print(f"\n📂 Results saved to CSV: {csv_path}")
 
     print("\n✅ All experiments completed!")
     print("📊 Results saved in:", args.save_dir)

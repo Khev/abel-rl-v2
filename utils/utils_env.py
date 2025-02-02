@@ -286,9 +286,8 @@ def get_ordered_sub_expressions(expr):
     # Sorting rule:
     # - Prioritize smallest-length expressions first
     # - Tie-break by lexicographic order of string representations (stable mapping)
-    return sorted(sub_expressions, key=lambda x: x.sort_key())
-    #return sorted(sub_expressions, key=str)
-    #return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
+    #return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
+    return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
 
 
 def check_valid_eqn(lhs, rhs):

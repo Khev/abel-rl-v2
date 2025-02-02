@@ -1,0 +1,15 @@
+f*x
+g*x
+h*x
+i*x
+j*x
+x + f
+x + g
+x + h
+x + i
+x + j
+f*x + g
+g*x + h
+h*x + i
+i*x + j
+j*x + f
