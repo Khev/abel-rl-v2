@@ -38,6 +38,7 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
         "ppo": PPO,
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
+        # "dqn-gnn": lambda policy, env, **kwargs: DQN(CustomGNNPolicy, env, **kwargs),
         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
         "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs)
         # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
@@ -55,15 +56,17 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
     # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
     #     CustomGNNPolicy, 
     #     env, 
+    #     n_steps = 4096,
+    #     target_kl=0.01,
     #     learning_rate=1e-4,        # Lower LR to prevent policy drift
     #     n_epochs=20,               # More updates per batch for better learning
     #     batch_size=512,            # Reduce batch size for smoother updates
-    #     clip_range=0.05,           # Smaller step sizes to prevent oscillations
+    #     clip_range=0.1,           # Smaller step sizes to prevent oscillations
     #     gae_lambda=0.98,           # Smoother advantages, reduces variance
     #     ent_coef=0.01,             # Regular exploration
-    #     # ent_coef_schedule=lambda f: 0.01 * (1 - f),  # Decay entropy over training
+    #     vf_coef=0.5,  # Strengthens the value function loss
     #      policy_kwargs=dict(
-    #             net_arch=[512, 512, 256],  # ✅ Bigger policy network (3 layers, 512-512-256 neurons)
+    #             net_arch=[1024, 1024, 512],  # ✅ Bigger policy network (3 layers, 512-512-256 neurons)
     #             activation_fn=th.nn.ReLU   # ✅ Keep ReLU activation
     #         ),
     #     normalize_advantage=True,  # Normalize rewards to prevent reward imbalance
@@ -107,7 +110,7 @@ def print_results_dict_as_df(title, d):
 def get_action_mask(env):
     return env.action_mask
 
-def evaluate_agent(agent, env, equation_list, n_eval_episodes=10):
+def evaluate_agent(agent, env, equation_list, n_eval_episodes=100):
     """
     Evaluate agent on each eqn in equation_list for n_eval_episodes per eqn.
     Returns a dict eqn -> success percentage.
@@ -192,10 +195,10 @@ class TrainingLogger(BaseCallback):
 
         if self.eval_env:
             print("\nInitial evaluation (t=0)...")
-            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
+            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=100)
             print_eval_results(train_results, label="Train")
 
-            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
+            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=100)
             print_eval_results(test_results, label="Test")
 
             self.logged_steps.append(0)  # Log step 0
@@ -256,10 +259,10 @@ class TrainingLogger(BaseCallback):
         if self.eval_env and self.n_calls % self.eval_interval == 0:
 
             print("\nRunning evaluation...")
-            train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
+            train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=100)
             print_eval_results(train_results, label='Train')
 
-            test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
+            test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=100)
             print_eval_results(test_results, label='Test')
 
             self.logged_steps.append(self.num_timesteps)
@@ -489,7 +492,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn'])
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn', 'dqn-gnn'])
     parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
     parser.add_argument('--Ntrain', type=int, default=10**7, help='Number of training steps')
     parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
@@ -502,7 +505,7 @@ if __name__ == "__main__":
 
     # Generalization parameters
     parser.add_argument('--level', type=int, default=2)
-    parser.add_argument('--generalization', type=str, default='shallow',choices=['shallow','deep'])
+    parser.add_argument('--generalization', type=str, default='lexical',choices=['lexical', 'structural', 'shallow','deep'])
 
     args = parser.parse_args()
     
@@ -516,7 +519,7 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
-    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type != 'ppo-gnn':
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type not in ['ppo-gnn', 'dqn-gnn']:
         raise ValueError(
         f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
         f"but got '{args.state_rep}'.\n"

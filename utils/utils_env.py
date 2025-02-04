@@ -813,7 +813,7 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
         train_eqns (list): List of sympified train equations.
         test_eqns (list): List of sympified test equations.
     """
-    if generalization not in ["shallow", "deep"]:
+    if generalization not in ["shallow", "lexical", "structural", "deep"]:
         raise ValueError(f"Invalid generalization type '{generalization}'. Choose 'shallow' or 'deep'.")
 
     # Construct path based on generalization type

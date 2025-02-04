@@ -12,11 +12,11 @@ def run_training(worker_id):
     print(f"Starting worker {worker_id}...")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn',
+    parser.add_argument('--agent_type', type=str, default='ppo-mask',
                         choices=['dqn', 'a2c', 'ppo', 'ppo-mask', 'ppo-cnn', 'ppo-gnn'])
-    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
+    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
     parser.add_argument('--Ntrain', type=int, default=10000000, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='None',
+    parser.add_argument('--intrinsic_reward', type=str, default='ICM',
                         choices=['ICM', 'E3B', 'RIDE', 'None'], help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
                         default=True, help="Normalize rewards (True/False)")
@@ -26,7 +26,7 @@ def run_training(worker_id):
 
     # Generalization parameters
     parser.add_argument('--level', type=int, default=7)
-    parser.add_argument('--generalization', type=str, default='shallow', choices=['shallow', 'deep'])
+    parser.add_argument('--generalization', type=str, default='structural')
 
     args = parser.parse_args()
 
@@ -43,11 +43,6 @@ def run_training(worker_id):
     # Run training
     train_results, test_results, max_test_acc_one_shot  = main(args)
 
-    # Extract max test accuracy from TrainingLogger
-    # max_test_acc_one_shot = 0
-    # if hasattr(main, 'max_test_acc_one_shot'):
-    #     max_test_acc_one_shot = main.max_test_acc_one_shot
-
     return worker_id, max_test_acc_one_shot
 
 
@@ -55,9 +50,8 @@ if __name__ == "__main__":
 
 
     # Set parameters
-    Ntrain = 10**7  # Number of training steps
-    num_workers = 6  # Number of parallel processes
-    parallel = True  # Whether to run in parallel
+    num_workers = 2  # Number of parallel processes
+    parallel = False  # Whether to run in parallel
 
 
     if parallel:
