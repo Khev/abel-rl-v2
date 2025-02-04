@@ -1,0 +1,4 @@
+a*x
+x + a
+a*x + b
+a/x + b

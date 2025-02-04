@@ -1,0 +1,5 @@
+c*(a*x + b) + d
+a*(b*x + d) + e
+e*(e*x + a) + a
+a*(b*x + e) + b
+b*(e*x + a) + c

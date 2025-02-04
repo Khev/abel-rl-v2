@@ -1,0 +1,5 @@
+j*(f*x + g) + (h*x + i)
+f*(g*x + h) + (i*x + j)
+g*(h*x + i) + (j*x + f)
+h*(i*x + j) + (f*x + g)
+i*(j*x + f) + (g*x + h)

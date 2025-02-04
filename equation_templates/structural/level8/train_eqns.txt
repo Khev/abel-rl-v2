@@ -1,0 +1,8 @@
+a*x
+x + a
+a*x + b
+a/x + b
+c*(a*x + b) + d
+d/(a*x + b) + c
+e*(a*x + b) + (c*x + d)
+(a*x + b)/(c*x + d) + e

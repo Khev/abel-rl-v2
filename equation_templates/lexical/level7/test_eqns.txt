@@ -1,0 +1,5 @@
+(f*x + g)/(h*x + i) + j
+(g*x + h)/(i*x + j) + f
+(h*x + i)/(j*x + f) + g
+(i*x + j)/(f*x + g) + h
+(j*x + f)/(g*x + h) + i

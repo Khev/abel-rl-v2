@@ -1,0 +1,4 @@
+f*x
+x + f
+f*x + g
+f/x + g

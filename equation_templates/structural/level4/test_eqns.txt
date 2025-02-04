@@ -1,0 +1,5 @@
+f*x
+x + f
+f*x + g
+f/x + g
+h*(f*x + g) + i

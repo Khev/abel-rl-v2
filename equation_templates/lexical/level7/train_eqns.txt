@@ -1,0 +1,5 @@
+(a*x + b)/(c*x + d) + e
+(a*x + c)/(d*x + c) + a
+(b*x + a)/(b*x + a) + b
+(b*x + c)/(a*x + b) + c
+(d*x + a)/(b*x + c) + d

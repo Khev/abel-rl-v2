@@ -1,0 +1,8 @@
+f*x
+x + f
+f*x + g
+f/x + g
+h*(f*x + g) + i
+i/(f*x + g) + h
+j*(f*x + g) + (h*x + i)
+(f*x + g)/(h*x + i) + j
