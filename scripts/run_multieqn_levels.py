@@ -13,10 +13,10 @@ def run_training(level):
 
     # Manually construct arguments
     args = argparse.Namespace(
-        agent_type='ppo-mask',
-        state_rep='integer_1d',
-        Ntrain=5*10**6,
-        intrinsic_reward='ICM',
+        agent_type='ppo-gnn1',
+        state_rep='graph_integer_2d',
+        Ntrain=10**7,
+        intrinsic_reward='None',
         normalize_rewards=True,
         log_interval=None,
         save_dir=f'data/generalize/level{level}',
@@ -42,11 +42,12 @@ def run_training(level):
 
 if __name__ == "__main__":
     # Set parameters
-    levels = range(8)  # Iterate over levels 0 to 7
+    levels = range(7)  # Iterate over levels 0 to 7
     parallel = True  # Whether to run in parallel
 
     if parallel:
-        with multiprocessing.Pool(min(multiprocessing.cpu_count(), len(levels))) as pool:
+        num_workers = 2
+        with multiprocessing.Pool(num_workers) as pool:
             results = pool.map(run_training, levels)
     else:
         results = [run_training(level) for level in levels]

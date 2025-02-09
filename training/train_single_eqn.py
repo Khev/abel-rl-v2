@@ -154,7 +154,6 @@ class IntrinsicReward(BaseCallback):
         """
         Efficiently compute intrinsic rewards once per rollout and store them.
         """
-        breakpoint()
         obs = th.as_tensor(self.buffer.observations).float()
         new_obs = obs.clone()
         new_obs[:-1] = obs[1:]
@@ -193,7 +192,7 @@ def main(args):
 
     # Make env
     env = singleEqn(main_eqn=args.main_eqn, normalize_rewards=args.normalize_rewards, state_rep=args.state_rep)
-    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn']:
+    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn','ppo-gnn1']:
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
 
@@ -258,7 +257,7 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
-    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type != 'ppo-gnn':
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type not in ['ppo-gnn', 'ppo-gnn1']:
         raise ValueError(
         f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
         f"but got '{args.state_rep}'.\n"

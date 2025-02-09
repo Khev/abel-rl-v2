@@ -12,11 +12,11 @@ def run_training(worker_id):
     print(f"Starting worker {worker_id}...")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-mask',
-                        choices=['dqn', 'a2c', 'ppo', 'ppo-mask', 'ppo-cnn', 'ppo-gnn'])
-    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10000000, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='ICM',
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn1',
+                        choices=['dqn', 'a2c', 'ppo', 'ppo-mask', 'ppo-cnn', 'ppo-gnn','ppo-gnn1'])
+    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
+    parser.add_argument('--Ntrain', type=int, default=10**7, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='None',
                         choices=['ICM', 'E3B', 'RIDE', 'None'], help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
                         default=True, help="Normalize rewards (True/False)")
@@ -42,8 +42,10 @@ def run_training(worker_id):
 
     # Run training
     train_results, test_results, max_test_acc_one_shot  = main(args)
+    train_acc = np.mean(list(train_results.values())) if train_results else 0.0
+    test_acc = np.mean(list(test_results.values())) if test_results else 0.0
 
-    return worker_id, max_test_acc_one_shot
+    return worker_id, train_acc, test_acc, max_test_acc_one_shot 
 
 
 if __name__ == "__main__":
@@ -62,5 +64,5 @@ if __name__ == "__main__":
 
     # Print final results
     print("\n==== Summary of max_test_acc_one_shot across all trials ====")
-    for worker_id, max_acc in results:
-        print(f"Worker {worker_id}: max_test_acc_one_shot = {max_acc:.2f}")
+    for worker_id, train_acc, test_acc, max_test_acc_one_shot  in results:
+        print(f"Worker_id {worker_id}: train, test, test_max_one_shot = {train_acc:.2f}, {test_acc:.2f}, {max_test_acc_one_shot:.2f}")

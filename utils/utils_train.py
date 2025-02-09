@@ -16,6 +16,12 @@ from torch_geometric.nn import GCNConv, global_mean_pool
 
 from rllte.xplore.reward import E3B, ICM, RIDE
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GATConv, BatchNorm, global_mean_pool
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
 
 def get_device():
     """Returns the appropriate device (CUDA or CPU)."""
@@ -40,7 +46,8 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs)
+        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs),
+        "ppo-gnn1": lambda policy, env, **kwargs: MaskablePPO(PPOGNN1Policy, env, ent_coef=0.1, **kwargs)
     }
     
     if agent_type not in agents:
@@ -234,3 +241,114 @@ class CustomGNNPolicy(MaskableActorCriticPolicy):
             features_extractor_kwargs={"features_dim": 128},
             **kwargs
         )
+
+
+################################################################################
+# SECOND GNN # 
+
+
+class ImprovedGNNFeatureExtractor(BaseFeaturesExtractor):
+    """
+    Improved GNN Feature Extractor for SB3 PPO with:
+      - GATConv for attention-based aggregation
+      - Batch normalization for stabilization
+      - Residual connections for deep learning stability (with projection)
+      - Increased embedding dimension (512)
+      - Dropout for better generalization
+      - LeakyReLU instead of ReLU for smoother training
+    """
+
+    def __init__(self, observation_space, features_dim=512):
+        super().__init__(observation_space, features_dim)
+        in_channels = observation_space["node_features"].shape[1]  # e.g., 2
+
+        # GAT layers with BatchNorm
+        self.conv1 = GATConv(in_channels, 256, heads=4, concat=False)
+        self.bn1 = BatchNorm(256)
+
+        self.conv2 = GATConv(256, 512, heads=4, concat=False)
+        self.bn2 = BatchNorm(512)
+
+        self.conv3 = GATConv(512, 512, heads=4, concat=False)
+        self.bn3 = BatchNorm(512)
+
+        self.dropout = nn.Dropout(p=0.2)
+
+        # Projection for the residual connection: project 256-dim (from conv1) to 512-dim
+        self.res_conv1 = nn.Linear(256, 512)
+
+        # Final MLP for feature extraction
+        self.fc = nn.Sequential(
+            nn.Linear(512, features_dim),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.Dropout(p=0.2)
+        )
+
+    def forward(self, obs_batch):
+        """
+        Expects obs_batch to be a dict with at least:
+          - "node_features": Tensor of shape (B, max_nodes, feat_dim)
+          - "edge_index": Tensor of shape (B, 2, max_edges)
+        If "batch_idx" is not provided, it is computed from the batch dimension.
+        """
+        # Unpack node features and edge indices
+        node_features_b = obs_batch["node_features"]  # (B, max_nodes, feat_dim)
+        edge_index_b = obs_batch["edge_index"]          # (B, 2, max_edges)
+        B, max_nodes, feat_dim = node_features_b.shape
+        device = node_features_b.device
+
+        # Compute batch indices if not provided
+        if "batch_idx" in obs_batch:
+            batch_idx_b = obs_batch["batch_idx"]
+        else:
+            batch_idx_b = torch.arange(B, device=device).unsqueeze(1).repeat(1, max_nodes).view(-1)
+
+        # Flatten node features: (B * max_nodes, feat_dim)
+        x_all = node_features_b.view(-1, feat_dim)
+
+        # Build a global edge_index by offsetting each graph's indices
+        all_edge_index = []
+        node_offset = 0
+        for i in range(B):
+            # Ensure edge_index is an integer tensor
+            edge_index_i = edge_index_b[i].long()  
+            edge_index_i = edge_index_i + node_offset
+            all_edge_index.append(edge_index_i)
+            node_offset += max_nodes  # Increase offset by the number of nodes per graph
+        edge_index = torch.cat(all_edge_index, dim=1)
+
+        # Ensure tensors are on the same device
+        x_all = x_all.to(device)
+        edge_index = edge_index.to(device)
+        batch_idx_b = batch_idx_b.to(device)
+
+        # --- GAT layers with residual connections ---
+        x1 = F.leaky_relu(self.bn1(self.conv1(x_all, edge_index)), negative_slope=0.01)
+        x1 = self.dropout(x1)
+        x2 = F.leaky_relu(self.bn2(self.conv2(x1, edge_index)), negative_slope=0.01)
+        # Project x1 from 256-dim to 512-dim before adding
+        x = self.dropout(x2 + self.res_conv1(x1))
+        x3 = F.leaky_relu(self.bn3(self.conv3(x, edge_index)), negative_slope=0.01)
+        x = x3 + x
+
+        # Global mean pooling over nodes for each graph in the batch
+        x = global_mean_pool(x, batch_idx_b)
+
+        # Final MLP for feature extraction
+        return self.fc(x)
+
+
+
+
+class PPOGNN1Policy(MaskableActorCriticPolicy):
+    """ Custom PPO-GNN-1 Policy using ImprovedGNNFeatureExtractor """
+    def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
+        super().__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
+            features_extractor_class=ImprovedGNNFeatureExtractor,
+            features_extractor_kwargs={"features_dim": 512},
+            **kwargs
+        )
+

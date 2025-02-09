@@ -19,8 +19,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 
-
-from utils.utils_train import get_intrinsic_reward, get_device, CustomGNNPolicy
+from utils.utils_train import get_intrinsic_reward, get_device, CustomGNNPolicy, get_agent
 from utils.custom_functions import operation_names
 from utils.utils_general import print_parameters, print_header
 from colorama import Fore, Style
@@ -30,56 +29,6 @@ device = get_device()
 from sb3_contrib import MaskablePPO
 from stable_baselines3 import DQN, PPO, A2C
 
-def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
-    """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib, PPO with CNN, and PPO with GNN."""
-
-    agents = {
-        "dqn": DQN,
-        "ppo": PPO,
-        "a2c": A2C,
-        "ppo-mask": MaskablePPO,
-        # "dqn-gnn": lambda policy, env, **kwargs: DQN(CustomGNNPolicy, env, **kwargs),
-        "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs)
-        # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
-        #     CustomGNNPolicy, 
-        #     env, 
-        #     learning_rate=1e-4,      # Lower LR to prevent policy drift
-        #     n_epochs=20,             # More updates per batch for better learning
-        #     batch_size=512,          # Larger batch size for stability
-        #     clip_range=0.1,          # Tight clipping to prevent large updates
-        #     ent_coef=0.01,           # Encourage exploration
-        #     normalize_advantage=True, # Normalize rewards to prevent reward imbalance
-        #     **kwargs
-        # )
-
-    # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
-    #     CustomGNNPolicy, 
-    #     env, 
-    #     n_steps = 4096,
-    #     target_kl=0.01,
-    #     learning_rate=1e-4,        # Lower LR to prevent policy drift
-    #     n_epochs=20,               # More updates per batch for better learning
-    #     batch_size=512,            # Reduce batch size for smoother updates
-    #     clip_range=0.1,           # Smaller step sizes to prevent oscillations
-    #     gae_lambda=0.98,           # Smoother advantages, reduces variance
-    #     ent_coef=0.01,             # Regular exploration
-    #     vf_coef=0.5,  # Strengthens the value function loss
-    #      policy_kwargs=dict(
-    #             net_arch=[1024, 1024, 512],  # ✅ Bigger policy network (3 layers, 512-512-256 neurons)
-    #             activation_fn=th.nn.ReLU   # ✅ Keep ReLU activation
-    #         ),
-    #     normalize_advantage=True,  # Normalize rewards to prevent reward imbalance
-    #     **kwargs
-    # )
-
-    }
-    
-    if agent_type not in agents:
-        raise ValueError(f"Unsupported agent type: {agent_type}. Choose from {list(agents.keys())}")
-
-    model = agents[agent_type](policy, env, **kwargs)
-    return model
 
 def print_eval_results(test_results, label=""):
     """
@@ -110,7 +59,7 @@ def print_results_dict_as_df(title, d):
 def get_action_mask(env):
     return env.action_mask
 
-def evaluate_agent(agent, env, equation_list, n_eval_episodes=100):
+def evaluate_agent(agent, env, equation_list, n_eval_episodes=10):
     """
     Evaluate agent on each eqn in equation_list for n_eval_episodes per eqn.
     Returns a dict eqn -> success percentage.
@@ -195,10 +144,10 @@ class TrainingLogger(BaseCallback):
 
         if self.eval_env:
             print("\nInitial evaluation (t=0)...")
-            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=100)
+            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
             print_eval_results(train_results, label="Train")
 
-            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=100)
+            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
             print_eval_results(test_results, label="Test")
 
             self.logged_steps.append(0)  # Log step 0
@@ -259,10 +208,10 @@ class TrainingLogger(BaseCallback):
         if self.eval_env and self.n_calls % self.eval_interval == 0:
 
             print("\nRunning evaluation...")
-            train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=100)
+            train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
             print_eval_results(train_results, label='Train')
 
-            test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=100)
+            test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
             print_eval_results(test_results, label='Test')
 
             self.logged_steps.append(self.num_timesteps)
@@ -421,23 +370,9 @@ def main(args):
     # Make env
     env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
          generalization=args.generalization)
-    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn']:
+    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn','ppo-gnn1']:
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
-
-    vec_env = False
-    if vec_env == True:
-        def make_env():
-            def _init():
-                env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
-                            generalization=args.generalization)
-                env = Monitor(env)  # Logging
-                if args.agent_type in ["ppo-mask", 'ppo-cnn', 'ppo-gnn']:
-                    env = ActionMasker(env, get_action_mask)  # ✅ Apply ActionMasker inside make_env()
-                return env
-            return _init
-        num_envs = 6
-        env = SubprocVecEnv([make_env() for _ in range(num_envs)])
 
     # Make agent
     agent = get_agent(args.agent_type, env)
@@ -492,9 +427,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn', 'dqn-gnn'])
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn1')
     parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**7, help='Number of training steps')
+    parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
     parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
@@ -519,7 +454,7 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
-    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type not in ['ppo-gnn', 'dqn-gnn']:
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type not in ['ppo-gnn', 'ppo-gnn1']:
         raise ValueError(
         f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
         f"but got '{args.state_rep}'.\n"

@@ -56,10 +56,14 @@ class multiEqn(Env):
         eqn_dirn = f"equation_templates"
         self.train_eqns, self.test_eqns = load_train_test_equations(eqn_dirn, level, generalization=generalization)
 
-        #self.train_eqns = ['a*x+b', 'b*x+c', 'c*x+d', 'd*x+e', 'e*x+a']
-        #self.test_eqns = ['b*x+a', 'c*x+b', 'd*x+c', 'e*x+d', 'a*x+e']
-        #self.train_eqns = [sympify(e) for e in self.train_eqns]
-        #self.test_eqns = [sympify(e) for e in self.test_eqns]
+        # self.train_eqns = self.train_eqns[:2]
+        # self.test_eqns = self.test_eqns[:2]
+
+        # self.train_eqns = ['a*x', 'x+b', 'a*x+b', 'a/x+b', 'c*(a*x+b)+d', 'sqrt(a*x+b)+c', '(a*x**2+b)**2+c', 'd/(a*x+b)+c',
+        #                     'e*(a*x+b)+(c*x+d)', '(a*x+b)/(c*x+d)+e']
+        # self.test_eqns = []
+        # self.train_eqns = [sympify(e) for e in self.train_eqns]
+        # self.test_eqns = [sympify(e) for e in self.test_eqns]
         
         # Set main equation to solve
         self.main_eqn = np.random.choice(self.train_eqns)
