@@ -52,8 +52,8 @@ def generate_lexical_data(eqns, outdir="equation_templates/structural"):
         train_all = []
         test_all = []
         for eqn_template in selected_eqns:
-            train_all.extend(unique_expansions(eqn_template, train_letters, n_eqns=1))
-            test_all.extend(unique_expansions(eqn_template, test_letters, n_eqns=1))
+            train_all.extend(unique_expansions(eqn_template, train_letters, n_eqns=2))
+            test_all.extend(unique_expansions(eqn_template, test_letters, n_eqns=2))
 
         level_dir = os.path.join(outdir, f"level{lvl}")
         os.makedirs(level_dir, exist_ok=True)

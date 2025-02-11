@@ -4,6 +4,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import argparse
 import multiprocessing
+import numpy as np
 from training.train_multi_eqn import main
 
 
@@ -12,11 +13,11 @@ def run_training(worker_id):
     print(f"Starting worker {worker_id}...")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn1',
+    parser.add_argument('--agent_type', type=str, default='ppo-mask',
                         choices=['dqn', 'a2c', 'ppo', 'ppo-mask', 'ppo-cnn', 'ppo-gnn','ppo-gnn1'])
-    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**7, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='None',
+    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
+    parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='ICM',
                         choices=['ICM', 'E3B', 'RIDE', 'None'], help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
                         default=True, help="Normalize rewards (True/False)")
@@ -25,7 +26,7 @@ def run_training(worker_id):
     parser.add_argument('--verbose', type=int, default=0)
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=7)
+    parser.add_argument('--level', type=int, default=4)
     parser.add_argument('--generalization', type=str, default='structural')
 
     args = parser.parse_args()

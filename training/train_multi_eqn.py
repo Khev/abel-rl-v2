@@ -420,7 +420,7 @@ def main(args):
     print(f"Training completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
 
     # extract off max
-    max_test_acc_one_shot = callback.max_test_acc_one_shot = 0.0
+    max_test_acc_one_shot = callback.max_test_acc_one_shot
 
     return train_results, test_results, max_test_acc_one_shot
 
