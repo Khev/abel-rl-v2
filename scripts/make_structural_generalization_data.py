@@ -43,7 +43,7 @@ def save_list_to_txt(filename, eqn_list):
         for eqn in eqn_list:
             f.write(eqn + "\n")
 
-def generate_lexical_data(eqns, outdir="equation_templates/structural"):
+def generate_lexical_data(eqns, outdir="equation_templates/random"):
     os.makedirs(outdir, exist_ok=True)
 
     for lvl in range(1, len(eqns) + 1):  # Iterate over levels, selecting eqns[:lvl]
@@ -52,8 +52,8 @@ def generate_lexical_data(eqns, outdir="equation_templates/structural"):
         train_all = []
         test_all = []
         for eqn_template in selected_eqns:
-            train_all.extend(unique_expansions(eqn_template, train_letters, n_eqns=2))
-            test_all.extend(unique_expansions(eqn_template, test_letters, n_eqns=2))
+            train_all.extend(unique_expansions(eqn_template, train_letters, n_eqns=1))
+            test_all.extend(unique_expansions(eqn_template, test_letters, n_eqns=1))
 
         level_dir = os.path.join(outdir, f"level{lvl}")
         os.makedirs(level_dir, exist_ok=True)

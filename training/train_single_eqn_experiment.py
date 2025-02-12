@@ -1,12 +1,13 @@
 import sys
 import os
+import pickle
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import argparse
 import numpy as np
 import torch as th
 
-from envs.single_eqn import singleEqn
+from envs.single_eqn_experiment import singleEqn
 
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.monitor import Monitor
@@ -63,7 +64,7 @@ class TrainingLogger(BaseCallback):
         self.rewards_ext = []  # External rewards
         self.T_solve = None
         self.T_converge = None
-        self.early_stopping = True
+        self.early_stopping = False
 
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
@@ -96,6 +97,8 @@ class TrainingLogger(BaseCallback):
             main_eqn = info['main_eqn']
             print(f"{main_eqn}: Step {self.num_timesteps}: "
                   f"(min, mean, max)_reward_external = ({min_reward_ext:.2f}, {mean_reward_ext:.2f}, {max_reward_ext:.2f})")
+            states_seen = len(self.model.get_env().get_attr("states_seen")[0])
+            print("States seen so far:", states_seen)
 
         # Evaluation at intervals
         # if self.eval_env and self.n_calls % self.eval_interval == 0:
@@ -223,21 +226,22 @@ def main(args):
     # Extract info
     #T_solve, T_converge = callback.T_solve, callback.T_converge
     if type(callback) == list:
-        T_solve, T_converge = callback[0].T_solve, None
-    else:
-        T_solve, T_converge = callback.T_solve, None
+        callback = callback[0]
+    T_solve, T_converge = callback.T_solve, None
 
+    states_seen = env.get_attr("states_seen")[0]
+    actions_taken = env.get_attr("actions_taken")[0]
 
-    return T_solve, T_converge
+    return T_solve, T_converge, states_seen, actions_taken
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn'])
-    parser.add_argument('--main_eqn', type=str, default='a*x+b', help='Main equation to solv')
-    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
+    parser.add_argument('--agent_type', type=str, default='ppo-mask',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn'])
+    parser.add_argument('--main_eqn', type=str, default='e*(a*x+b)+(c*x+d)', help='Main equation to solv')
+    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
+    parser.add_argument('--Ntrain', type=int, default=3*10**6, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
          default=True, help="Normalize rewards (True/False)")
@@ -264,8 +268,21 @@ if __name__ == "__main__":
         f"👉 Fix this by using 'state_rep=graph_integer_2d' in your config."
     )
         
+    
+    results = {}
+    os.makedirs("data/curiosity_deepdive", exist_ok=True)
+    for reward in ['None', 'ICM', 'E3B'][0:1]:
+        args.intrinsic_reward = reward
+        T_solve, T_converge, states_seen, actions_taken = main(args)
+        results[reward] = len(states_seen)
 
-    T_solve, T_converge = main(args)
+        with open(f"data/curiosity_deepdive/states_seen_{reward}.pkl", "wb") as f:
+            pickle.dump(states_seen, f)
+        
+        # Save actions_taken
+        with open(f"data/curiosity_deepdive/actions_taken_{reward}.pkl", "wb") as f:
+            pickle.dump(actions_taken, f)
+
 
 
 

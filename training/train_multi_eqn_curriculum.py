@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import argparse, json, pickle, time
@@ -8,7 +9,7 @@ import torch as th
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from envs.multi_eqn import multiEqn
+from envs.multi_eqn_curriculum import multiEqn
 
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.env_util import make_vec_env
@@ -19,8 +20,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 
-
-from utils.utils_train import get_intrinsic_reward, get_device, CustomGNNPolicy
+from utils.utils_train import get_intrinsic_reward, get_device, CustomGNNPolicy, get_agent
 from utils.custom_functions import operation_names
 from utils.utils_general import print_parameters, print_header
 from colorama import Fore, Style
@@ -30,53 +30,6 @@ device = get_device()
 from sb3_contrib import MaskablePPO
 from stable_baselines3 import DQN, PPO, A2C
 
-def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
-    """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib, PPO with CNN, and PPO with GNN."""
-
-    agents = {
-        "dqn": DQN,
-        "ppo": PPO,
-        "a2c": A2C,
-        "ppo-mask": MaskablePPO,
-        "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs)
-        # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
-        #     CustomGNNPolicy, 
-        #     env, 
-        #     learning_rate=1e-4,      # Lower LR to prevent policy drift
-        #     n_epochs=20,             # More updates per batch for better learning
-        #     batch_size=512,          # Larger batch size for stability
-        #     clip_range=0.1,          # Tight clipping to prevent large updates
-        #     ent_coef=0.01,           # Encourage exploration
-        #     normalize_advantage=True, # Normalize rewards to prevent reward imbalance
-        #     **kwargs
-        # )
-
-    # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(
-    #     CustomGNNPolicy, 
-    #     env, 
-    #     learning_rate=1e-4,        # Lower LR to prevent policy drift
-    #     n_epochs=20,               # More updates per batch for better learning
-    #     batch_size=512,            # Reduce batch size for smoother updates
-    #     clip_range=0.05,           # Smaller step sizes to prevent oscillations
-    #     gae_lambda=0.98,           # Smoother advantages, reduces variance
-    #     ent_coef=0.01,             # Regular exploration
-    #     # ent_coef_schedule=lambda f: 0.01 * (1 - f),  # Decay entropy over training
-    #      policy_kwargs=dict(
-    #             net_arch=[512, 512, 256],  # ✅ Bigger policy network (3 layers, 512-512-256 neurons)
-    #             activation_fn=th.nn.ReLU   # ✅ Keep ReLU activation
-    #         ),
-    #     normalize_advantage=True,  # Normalize rewards to prevent reward imbalance
-    #     **kwargs
-    # )
-
-    }
-    
-    if agent_type not in agents:
-        raise ValueError(f"Unsupported agent type: {agent_type}. Choose from {list(agents.keys())}")
-
-    model = agents[agent_type](policy, env, **kwargs)
-    return model
 
 def print_eval_results(test_results, label=""):
     """
@@ -160,6 +113,11 @@ class TrainingLogger(BaseCallback):
         self.train_accuracy = []
         self.test_accuracy = []
 
+        self.train_accuracy_one_shot = []
+        self.test_accuracy_one_shot = []
+
+        self.max_test_acc_one_shot = 0.0
+
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
@@ -187,15 +145,37 @@ class TrainingLogger(BaseCallback):
 
         if self.eval_env:
             print("\nInitial evaluation (t=0)...")
-            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
-            print_eval_results(train_results, label="Train")
+            # train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
+            # print_eval_results(train_results, label="Train")
 
-            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
-            print_eval_results(test_results, label="Test")
+            # test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
+            # print_eval_results(test_results, label="Test")
+
+            print('Solve counts')
+            all_solve_counts = self.eval_env.get_attr("solve_counts")[0]
+            for eqn, solve_count in all_solve_counts.items():
+                print(f"{eqn}: {solve_count}")
+            print('\n')
 
             self.logged_steps.append(0)  # Log step 0
-            self.train_accuracy.append(np.mean(list(train_results.values())))
-            self.test_accuracy.append(np.mean(list(test_results.values())))
+
+            # train_acc = np.mean(list(train_results.values()))
+            # test_acc = np.mean(list(test_results.values()))
+            # self.train_accuracy.append(np.mean(list(train_results.values())))
+            # self.test_accuracy.append(np.mean(list(test_results.values())))
+
+            # train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
+            # test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
+            # self.train_accuracy_one_shot.append(train_acc_one_shot)
+            # self.test_accuracy_one_shot.append(test_acc_one_shot)
+            # self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
+
+    
+            # print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
+            # print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
+            # print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
+
+
 
     def _on_step(self) -> bool:
         """
@@ -235,22 +215,38 @@ class TrainingLogger(BaseCallback):
         if self.eval_env and self.n_calls % self.eval_interval == 0:
 
             print("\nRunning evaluation...")
-            train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
-            print_eval_results(train_results, label='Train')
+            # train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
+            # print_eval_results(train_results, label='Train')
 
-            test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
-            print_eval_results(test_results, label='Test')
+            # test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
+            # print_eval_results(test_results, label='Test')
 
-            self.logged_steps.append(self.num_timesteps)
-            train_acc = np.mean(list(train_results.values()))
-            test_acc = np.mean(list(test_results.values()))
-            self.train_accuracy.append(np.mean(list(train_results.values())))
-            self.test_accuracy.append(np.mean(list(test_results.values())))
+            print('Solve counts')
+            all_solve_counts = self.eval_env.get_attr("solve_counts")[0]
+            for eqn, solve_count in all_solve_counts.items():
+                print(f"{eqn}: {solve_count}")
+            print('\n')
+
+            # train_acc = np.mean(list(train_results.values()))
+            # test_acc = np.mean(list(test_results.values()))
+            # self.train_accuracy.append(np.mean(list(train_results.values())))
+            # self.test_accuracy.append(np.mean(list(test_results.values())))
+
+            # train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
+            # test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
+            # self.train_accuracy_one_shot.append(train_acc_one_shot)
+            #self.test_accuracy_one_shot.append(test_acc_one_shot)
+
+            #self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
+            # print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
+            # print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
+            # print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
 
             # Early stopping
-            if test_acc == 100.0 and train_acc == 100.0:
-                print(Fore.YELLOW + f"'train_acc = test_acc = 100. Early stopping step {self.num_timesteps}!" + Style.RESET_ALL)
-                return False
+            #if test_acc == 100.0 and train_acc == 100.0:
+            # if train_acc == 100.0:
+            #     print(Fore.YELLOW + f"'train_acc = test_acc = 100. Early stopping step {self.num_timesteps}!" + Style.RESET_ALL)
+            #     return False
 
 
         # Save model checkpoint at intervals
@@ -268,30 +264,39 @@ class TrainingLogger(BaseCallback):
         """
         print("\nFinal Training Completed. Plotting Learning Curves...")
 
-        plt.figure(figsize=(10, 6))
-        plt.plot(self.logged_steps, self.train_accuracy, label="Train Accuracy", marker='o', linestyle='-')
-        plt.plot(self.logged_steps, self.test_accuracy, label="Test Accuracy", marker='s', linestyle='--')
+        # plt.figure(figsize=(10, 6))
+        # plt.plot(self.logged_steps, self.train_accuracy, label="Train Accuracy", 
+        #         marker='o', linestyle='-', color='b', markersize=6, linewidth=2)
+        # # plt.plot(self.logged_steps, self.test_accuracy, label="Test Accuracy", 
+        # #         marker='s', linestyle='--', color='r', markersize=6, linewidth=2)
+        # plt.plot(self.logged_steps, self.train_accuracy_one_shot, label="Train Accuracy (1-shot)", 
+        #         marker='D', linestyle='-.', color='g', markersize=6, linewidth=2)
+        # # plt.plot(self.logged_steps, self.test_accuracy_one_shot, label="Test Accuracy (1-shot)", 
+        # #         marker='^', linestyle=':', color='m', markersize=6, linewidth=2)
 
-        plt.xlabel("Training Steps")
-        plt.ylabel("Success Rate (%)")
-        plt.title("Train vs. Test Learning Progress")
-        plt.legend()
-        plt.grid()
-        plt.ylim([0,105])
-        plt.savefig(os.path.join(self.save_dir, "learning_curve.png"))
-        #plt.show()  # Only if running interactively
-        plt.close()
+        # plt.xlabel("Training Steps")
+        # plt.ylabel("Success Rate (%)")
+        # plt.title("Train vs. Test Learning Progress")
+        # plt.legend()
+        # plt.grid()
+        # plt.ylim([0,105])
+        # plt.savefig(os.path.join(self.save_dir, "learning_curve.png"))
+        # #plt.show()  # Only if running interactively
+        # plt.close()
 
 
-        # Save learning curve data
-        save_path = os.path.join(self.save_dir, "learning_progress.pkl")
-        with open(save_path, "wb") as f:
-            pickle.dump({
-                "steps": self.logged_steps,
-                "train_success": self.train_accuracy,
-                "test_success": self.test_accuracy
-            }, f)
-        print(f"Saved learning progress to {save_path}")
+        # # Save learning curve data
+        # save_path = os.path.join(self.save_dir, "learning_progress.pkl")
+        # with open(save_path, "wb") as f:
+        #     pickle.dump({
+        #         "steps": self.logged_steps,
+        #         "train_success": self.train_accuracy,
+        #         "train_success_one_shot": self.train_accuracy_one_shot
+        #         # "test_success": self.test_accuracy,
+        #         # "test_success_one_shot": self.test_accuracy_one_shot
+
+        #     }, f)
+        # print(f"Saved learning progress to {save_path}")
 
 
 
@@ -377,23 +382,9 @@ def main(args):
     # Make env
     env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
          generalization=args.generalization)
-    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn']:
+    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn','ppo-gnn1']:
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
-
-    vec_env = False
-    if vec_env == True:
-        def make_env():
-            def _init():
-                env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
-                            generalization=args.generalization)
-                env = Monitor(env)  # Logging
-                if args.agent_type in ["ppo-mask", 'ppo-cnn', 'ppo-gnn']:
-                    env = ActionMasker(env, get_action_mask)  # ✅ Apply ActionMasker inside make_env()
-                return env
-            return _init
-        num_envs = 6
-        env = SubprocVecEnv([make_env() for _ in range(num_envs)])
 
     # Make agent
     agent = get_agent(args.agent_type, env)
@@ -421,17 +412,23 @@ def main(args):
     test_results = evaluate_agent(agent, env, env.get_attr('test_eqns')[0], n_eval_episodes=10)
 
     print_eval_results(train_results, label='Train')
-    print_eval_results(test_results, label='Test')
+    #print_eval_results(test_results, label='Test')
 
     # Extract info
     if type(callback) == list:
         callback = callback[0]
     results_train, results_test = callback.results_train, callback.results_test
 
+    train_save_path = os.path.join(args.save_dir, "train_results.json")
+
+    train_dict_str_keys = {str(k): v for k, v in results_train.items()}
+    with open(train_save_path, "w") as f:
+        json.dump(train_dict_str_keys, f, indent=4)
+    print(f"Saved train results to {train_save_path}")
+
     # Print results
     print_header(f"Final results", color='cyan')
     print_results_dict_as_df("Training Results", results_train)
-    # print_results_dict_as_df("Testing Results", results_test)
 
     # Run time
     t2 = time.time()
@@ -440,51 +437,58 @@ def main(args):
     minutes, seconds = divmod(rem, 60)
     print(f"Training completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
 
+    # extract off max
+    max_test_acc_one_shot = callback.max_test_acc_one_shot
 
-    return train_results, test_results 
+    return train_results, test_results, max_test_acc_one_shot
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn',choices=['dqn','a2c','ppo','ppo-mask', 'ppo-cnn','ppo-gnn'])
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn')
     parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**7, help='Number of training steps')
+    parser.add_argument('--Ntrain', type=int, default=10**4, help='Number of training steps')
     parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
          default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
-    parser.add_argument('--save_dir', type=str, default='data/generalize', help='Directory to save the results')
+    parser.add_argument('--save_dir', type=str, default='data/curriculum', help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=1)
-    parser.add_argument('--generalization', type=str, default='shallow',choices=['shallow','deep'])
+    parser.add_argument('--level', type=int, default=8)
+    parser.add_argument('--generalization', type=str, default='random',choices=['lexical', 'structural', 'shallow','deep', 'random'])
 
     args = parser.parse_args()
     
     # Set default log_interval if not provided
     if args.log_interval is None:
-        #args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
-        args.log_interval = int(0.1 * args.Ntrain)
+        args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
+        #args.log_interval = int(0.1 * args.Ntrain)
     
     # Set save_dir
     args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}")
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
-    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type != 'ppo-gnn':
+    if args.state_rep in ['graph_integer_1d', 'graph_integer_2d'] and args.agent_type not in ['ppo-gnn', 'ppo-gnn1']:
         raise ValueError(
         f"❌ ERROR: 'ppo-gnn' requires 'graph_integer_1d' or 'graph_integer_2d' as state_rep, "
         f"but got '{args.state_rep}'.\n"
         f"👉 Fix this by using 'state_rep=graph_integer_2d' in your config."
     )
 
+    args_dict = vars(args)  # Convert argparse Namespace to a dict
+    args_save_path = os.path.join(args.save_dir, "args.json")
+    with open(args_save_path, "w") as f:
+        import json
+        json.dump(args_dict, f, indent=4)
+    print(f"Saved command-line arguments to {args_save_path}")
+
     print(f"Results saved to {args.save_dir}")
-
-        
-
-    results_train, results_test = main(args)
+    
+    results_train, results_test, max_test_acc_one_shot = main(args)
 
 
 

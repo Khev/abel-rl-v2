@@ -21,12 +21,12 @@ def run_training(level):
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
                         default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
-    parser.add_argument('--save_dir', type=str, default=f'data/generalize/structural/run_level{level}', help='Directory to save results')
+    parser.add_argument('--save_dir', type=str, default=f'data/generalize/lexical/run_level{level}', help='Directory to save results')
     parser.add_argument('--verbose', type=int, default=0)
 
     # Generalization parameters
     parser.add_argument('--level', type=int, default=level)
-    parser.add_argument('--generalization', type=str, default='structural')
+    parser.add_argument('--generalization', type=str, default='lexical')
 
     args = parser.parse_args()
 

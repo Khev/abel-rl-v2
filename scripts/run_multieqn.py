@@ -13,11 +13,11 @@ def run_training(worker_id):
     print(f"Starting worker {worker_id}...")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-mask',
+    parser.add_argument('--agent_type', type=str, default='ppo-gnn',
                         choices=['dqn', 'a2c', 'ppo', 'ppo-mask', 'ppo-cnn', 'ppo-gnn','ppo-gnn1'])
-    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**3, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='ICM',
+    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
+    parser.add_argument('--Ntrain', type=int, default=3*10**7, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='None',
                         choices=['ICM', 'E3B', 'RIDE', 'None'], help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
                         default=True, help="Normalize rewards (True/False)")
@@ -26,8 +26,8 @@ def run_training(worker_id):
     parser.add_argument('--verbose', type=int, default=0)
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=4)
-    parser.add_argument('--generalization', type=str, default='structural')
+    parser.add_argument('--level', type=int, default=7)
+    parser.add_argument('--generalization', type=str, default='lexical')
 
     args = parser.parse_args()
 
@@ -53,8 +53,8 @@ if __name__ == "__main__":
 
 
     # Set parameters
-    num_workers = 2  # Number of parallel processes
-    parallel = False  # Whether to run in parallel
+    num_workers = 5  # Number of parallel processes
+    parallel = True  # Whether to run in parallel
 
 
     if parallel:
