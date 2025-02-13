@@ -1,6 +1,3 @@
 a*x
-b*x
 x + a
-x + b
 a*x + b
-b*x + c

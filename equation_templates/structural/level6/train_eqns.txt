@@ -1,7 +1,14 @@
 a*x
+b*x
 x + a
+x + b
 a*x + b
+b*x + c
 a/x + b
+b/x + c
 c*(a*x + b) + d
+d*(b*x + c) + e
 d/(a*x + b) + c
+e/(b*x + c) + d
 e*(a*x + b) + (c*x + d)
+a*(b*x + c) + (d*x + e)
