@@ -502,7 +502,7 @@ if __name__ == "__main__":
 
 
     # Agent aprqameters
-    parser.add_argument('--ent_coef', type=float, default=0.1, help='Entropy coefficient for PPO or MaskablePPO')
+    parser.add_argument('--ent_coef', type=float, default=0.0, help='Entropy coefficient for PPO or MaskablePPO')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate for the RL agent')
     parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor (gamma) for the RL agent')
     parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps per rollout in PPO')
