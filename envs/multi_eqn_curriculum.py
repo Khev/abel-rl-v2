@@ -63,6 +63,8 @@ class multiEqn(Env):
         # Tracking how many times we've solved each eqn
         # Use a dict with keys = the actual sympy expression or string
         self.solve_counts = defaultdict(int)
+        self.sample_counts = defaultdict(int)
+
         # Convert each eqn to a canonical string so we can store counts easily
         self.train_eqns_str = [str(eq) for eq in self.train_eqns]
 
@@ -209,7 +211,7 @@ class multiEqn(Env):
         return obs_new, reward, terminated, truncated, info
 
 
-    def reset(self, seed=0, options=None):
+    def reset(self, seed=None, options=None):
         # Sample eqn in a 'curriculum' fashion:
         # pick eqn with probability ~ 1/(1+solve_counts)
         eqn_probs = []
@@ -221,6 +223,9 @@ class multiEqn(Env):
         chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
         self.main_eqn = sympify(chosen_eqn_str)
 
+        # Increment the count for how many times this eqn has been sampled
+        self.sample_counts[chosen_eqn_str] += 1
+
         self.current_steps = 0
         self.lhs, self.rhs = self.main_eqn, 0
         obs, _ = self.to_vec(self.lhs, self.rhs)
@@ -230,6 +235,7 @@ class multiEqn(Env):
         self.setup()
 
         return obs, {}
+
 
 
     def to_vec(self, lhs, rhs):
@@ -280,7 +286,8 @@ class multiEqn(Env):
 
     def set_equation(self,main_eqn):
         self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
-
+        obs, _ = self.to_vec(self.lhs, self.rhs)
+        self.state = obs
 
 # Example usage:
 if __name__ == "__main__":
