@@ -302,7 +302,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--agent_type', type=str, default='ppo-mask', help='Agent type')
     parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**4, help='Number of training steps')
+    parser.add_argument('--Ntrain', type=int, default=10**6, help='Number of training steps')
     parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'],
                         help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"),
@@ -351,10 +351,9 @@ if __name__ == "__main__":
         json.dump(vars(args), f, indent=4)
 
     # Define your hyperparameter grids:
-    learning_rates = [1e-4, 3e-4]        # Learning rates to try
-    ent_coeffs = [0.05, 0.1, 0.2]          # Entropy coefficients
-    #net_arch_options = [(3, 256), (3, 512), (4, 256), (4, 512)]  # Each tuple is (n_layers, hidden_dim)
-    net_arch_options = [(2, 64), (3, 512)]  # Each tuple is (n_layers, hidden_dim)
+    learning_rates = [1e-3, 3e-4, 1e-4]        # Learning rates to try
+    ent_coeffs = [0.01, 0.1, 0.2]          # Entropy coefficients
+    net_arch_options = [(2, 64), (3,256), (4,1024)]  # Each tuple is (n_layers, hidden_dim)
 
 
     # Generate the grid using itertools.product:
