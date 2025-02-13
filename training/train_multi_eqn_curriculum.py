@@ -379,6 +379,7 @@ def main(args):
     params = vars(args)
     print_parameters(params)
 
+
     # Make env
     env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
          generalization=args.generalization)
@@ -386,8 +387,36 @@ def main(args):
         env = ActionMasker(env, get_action_mask)
     env = DummyVecEnv([lambda: Monitor(env)])
 
+    #Make env
+    def make_env():
+        env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, \
+             level=args.level, generalization=args.generalization)
+        if args.agent_type in ["ppo-mask", "ppo-cnn", "ppo-gnn", "ppo-gnn1"]:
+            env = ActionMasker(env, get_action_mask)
+        return env
+
+    env_fns = [lambda: make_env() for _ in range(args.n_envs)]
+    #env = SubprocVecEnv(env_fns)
+    env = DummyVecEnv(env_fns)
+
+
     # Make agent
-    agent = get_agent(args.agent_type, env)
+    sb3_kwargs = {
+        "ent_coef": args.ent_coef,
+        "n_steps": args.n_steps,
+        "batch_size": args.batch_size,
+        "n_epochs": args.n_epochs,
+        "gamma": args.gamma,
+        "gae_lambda": args.gae_lambda,
+        "vf_coef": args.vf_coef,
+        "clip_range": args.clip_range,
+        "max_grad_norm": args.max_grad_norm,
+    }
+
+    net_arch = [args.hidden_dim] * args.n_layers
+    policy_kwargs = {"net_arch": net_arch}
+    sb3_kwargs["policy_kwargs"] = policy_kwargs
+    agent = get_agent(args.agent_type,env,**sb3_kwargs) 
 
     # Callback
     callback = TrainingLogger(log_interval=args.log_interval, save_dir=args.save_dir, eval_env=env)
@@ -419,12 +448,26 @@ def main(args):
         callback = callback[0]
     results_train, results_test = callback.results_train, callback.results_test
 
-    train_save_path = os.path.join(args.save_dir, "train_results.json")
+    train_save_path = os.path.join(args.save_dir, "Tsolve.json")
 
     train_dict_str_keys = {str(k): v for k, v in results_train.items()}
     with open(train_save_path, "w") as f:
         json.dump(train_dict_str_keys, f, indent=4)
     print(f"Saved train results to {train_save_path}")
+
+    # Save solve counts
+    solve_counts = env.get_attr("solve_counts")[0]
+    solve_counts_save_path = os.path.join(args.save_dir, "solve_counts.json")
+    with open(solve_counts_save_path, "w") as f:
+        json.dump(solve_counts, f, indent=4)
+    print(f"Saved solve counts to {solve_counts_save_path}")
+
+    # Save sample counts
+    sample_counts = env.get_attr("sample_counts")[0]
+    sample_counts_save_path = os.path.join(args.save_dir, "sample_counts.json")
+    with open(sample_counts_save_path, "w") as f:
+        json.dump(sample_counts, f, indent=4)
+    print(f"Saved sample counts to {sample_counts_save_path}")
 
     # Print results
     print_header(f"Final results", color='cyan')
@@ -445,30 +488,48 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_type', type=str, default='ppo-gnn')
-    parser.add_argument('--state_rep', type=str, default='graph_integer_2d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=10**4, help='Number of training steps')
-    parser.add_argument('--intrinsic_reward', type=str, default='None', choices=['ICM', 'E3B', 'RIDE', 'None'], \
+    parser.add_argument('--agent_type', type=str, default='ppo-mask')
+    parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
+    parser.add_argument('--Ntrain', type=int, default=3*10**6, help='Number of training steps')
+    parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
          default=True, help="Normalize rewards (True/False)")
     parser.add_argument('--log_interval', type=int, default=None, help='Log interval')
     parser.add_argument('--save_dir', type=str, default='data/curriculum', help='Directory to save the results')
     parser.add_argument('--verbose', type=int, default=0)
+    parser.add_argument('--n_envs', type=int, default=1, help='Number of envs to run in parallel')
+
+
+    # Agent aprqameters
+    parser.add_argument('--ent_coef', type=float, default=0.1, help='Entropy coefficient for PPO or MaskablePPO')
+    parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate for the RL agent')
+    parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor (gamma) for the RL agent')
+    parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps per rollout in PPO')
+    parser.add_argument('--batch_size', type=int, default=64, help='Minibatch size for each gradient update')
+    parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs to train on each batch')
+    parser.add_argument('--gae_lambda', type=float, default=0.95, help='GAE lambda')
+    parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function loss coefficient')
+    parser.add_argument('--clip_range', type=float, default=0.2, help='Clip range for PPO')
+    parser.add_argument('--max_grad_norm', type=float, default=0.5, help='Gradient clipping norm')
+
+    # New network parameters
+    parser.add_argument('--n_layers', type=int, default=3, help='Number of hidden layers in the policy network')
+    parser.add_argument('--hidden_dim', type=int, default=256, help='Number of hidden units per layer')
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=8)
+    parser.add_argument('--level', type=int, default=7)
     parser.add_argument('--generalization', type=str, default='random',choices=['lexical', 'structural', 'shallow','deep', 'random'])
 
     args = parser.parse_args()
     
     # Set default log_interval if not provided
     if args.log_interval is None:
-        args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
-        #args.log_interval = int(0.1 * args.Ntrain)
+        # args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
+        args.log_interval = int(0.1 * args.Ntrain)
     
     # Set save_dir
-    args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}")
+    args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}/{args.agent_type}/n_layer{args.n_layers}")
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
@@ -484,9 +545,9 @@ if __name__ == "__main__":
     with open(args_save_path, "w") as f:
         import json
         json.dump(args_dict, f, indent=4)
-    print(f"Saved command-line arguments to {args_save_path}")
 
-    print(f"Results saved to {args.save_dir}")
+    import envs.multi_eqn_curriculum
+    print(envs.multi_eqn_curriculum.__file__)
     
     results_train, results_test, max_test_acc_one_shot = main(args)
 

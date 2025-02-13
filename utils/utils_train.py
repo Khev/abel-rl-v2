@@ -23,6 +23,10 @@ from torch_geometric.nn import GATConv, BatchNorm, global_mean_pool
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
+# For PPO-mask
+def get_action_mask(env):
+    return env.action_mask
+
 def get_device():
     """Returns the appropriate device (CUDA or CPU)."""
     if torch.cuda.is_available():
@@ -46,8 +50,9 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
-        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0.1, **kwargs),
-        "ppo-gnn1": lambda policy, env, **kwargs: MaskablePPO(PPOGNN1Policy, env, ent_coef=0.1, **kwargs)
+        "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, **kwargs),
+        # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0, **kwargs),
+        #"ppo-gnn1": lambda policy, env, **kwargs: MaskablePPO(PPOGNN1Policy, env, ent_coef=0.1, **kwargs)
     }
     
     if agent_type not in agents:
