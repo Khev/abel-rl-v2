@@ -352,7 +352,7 @@ if __name__ == "__main__":
 
     # Define your hyperparameter grids:
     learning_rates = [1e-3, 3e-4, 1e-4]        # Learning rates to try
-    ent_coeffs = [0.01, 0.1, 0.2]          # Entropy coefficients
+    ent_coeffs = [0, 0.01, 0.1, 0.2]          # Entropy coefficients
     net_arch_options = [(2, 64), (3,256), (4,1024)]  # Each tuple is (n_layers, hidden_dim)
 
 
