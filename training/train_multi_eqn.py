@@ -440,7 +440,8 @@ if __name__ == "__main__":
 
     # Generalization parameters
     parser.add_argument('--level', type=int, default=2)
-    parser.add_argument('--generalization', type=str, default='lexical',choices=['lexical', 'structural', 'shallow','deep'])
+    parser.add_argument('--generalization', type=str, default='lexical',\
+        choices=['lexical', 'structural', 'shallow','deep','random'])
 
     args = parser.parse_args()
     
