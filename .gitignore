@@ -30,6 +30,8 @@ build/
 
 # Data directories
 data/
+results/
+models/
 **/data_*/**
 
 logs/
