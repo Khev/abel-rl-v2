@@ -30,6 +30,19 @@ from stable_baselines3.common.env_util import make_vec_env
 # Add for RLeXplore (install via: pip install rllte-core)
 from rllte.xplore.reward import ICM, E3B
 
+def get_main_eqn(env):
+    """Drill through Monitor / DummyVecEnv / VectorWrapper to reach the raw env."""
+    # 1. If it is a VecEnv (has .envs list), grab the first sub-env
+    if hasattr(env, "envs"):           # DummyVecEnv, SubprocVecEnv, VecMonitor, …
+        return get_main_eqn(env.envs[0])
+
+    # 2. If it is a Gymnasium Wrapper (has .env), dive one level
+    if hasattr(env, "env"):            # Monitor, TimeLimit, custom wrappers …
+        return get_main_eqn(env.env)
+
+    # 3. Base env reached; return attribute if present
+    return getattr(env, "main_eqn", "N/A")
+
 class SolveLoggerCallback(BaseCallback):
     """
     Prints a message whenever an episode is solved (info['is_solved']==True),
@@ -150,8 +163,8 @@ def evaluate_agent(model, env: gym.Env, n_eval_episodes: int = 10):
     total_rewards = []
     solves = 0
 
-    print('\nEVALUATE AGENT')
-    print('-------------------\n')
+    #print('\nEVALUATE AGENT')
+    #print('-------------------\n')
     for _ in range(n_eval_episodes):
         obs, _ = env.reset()
         done = False
@@ -167,7 +180,7 @@ def evaluate_agent(model, env: gym.Env, n_eval_episodes: int = 10):
             obs, r, term, trunc, info = env.step(action)
             ep_reward += r
             done = term or trunc
-            print(f'{env.main_eqn} || {env.actions[action]} -> {info["lhs"]} = {info["rhs"]}')
+            #print(f'{env.main_eqn} || {env.actions[action]} -> {info["lhs"]} = {info["rhs"]}')
 
             if info.get("is_solved", False):
                 ep_solved = True
@@ -179,7 +192,7 @@ def evaluate_agent(model, env: gym.Env, n_eval_episodes: int = 10):
     mean_r = float(np.mean(total_rewards))
     std_r  = float(np.std(total_rewards))
     solve_rate = solves / n_eval_episodes
-    print('\n')
+    #print('\n')
 
     return mean_r, std_r, solve_rate
 
@@ -319,7 +332,7 @@ def main(args):
     eval_cb  = EvalCallback(eval_env, eval_freq=args.eval_freq,
                             deterministic=True, verbose=0)
     solve_logger = SolveLoggerCallback(eval_env, args.algo)
-    callback = CallbackList([solve_logger, eval_cb])
+    callback = [solve_logger, eval_cb]
 
     # ╭──────────────── select & build model ───────────────╮
     if args.algo in {"ppo", "a2c"}:
@@ -381,7 +394,7 @@ def main(args):
     mean_post, std_post, win_rate_post = evaluate_agent(model, eval_env, n_eval_episodes=5)
 
 
-    print(f'{args.algo}')
+    print(f'{args.algo} | Eqn: {get_main_eqn(env.envs[0])}')
     print(f"win_rate_before = {win_rate_pre:.2f}")
     print(f"win_rate_after = {win_rate_post:.2f}")
 
@@ -399,11 +412,11 @@ if __name__ == "__main__":
     p.add_argument("--env-id",           default="single")
     p.add_argument("--algo",             default="ppo",
                    choices=["ppo", "a2c", "dqn", "dqn-per", "sac"])
-    p.add_argument("--Ntrain",  type=int, default=10**3)
+    p.add_argument("--Ntrain",  type=int, default=3*10**6)
     p.add_argument("--seed",             type=int, default=1)
     p.add_argument("--cuda",             action="store_true")
     p.add_argument("--eval-freq",        type=int, default=10_000)
-    p.add_argument("--curiosity",        type=str, default=None, choices=[None, "ICM", "E3B"])
+    p.add_argument("--curiosity",        type=str, default='ICM', choices=[None, "ICM", "E3B"])
     args = p.parse_args()
 
     algos = ["ppo", "a2c", "dqn", "dqn-per"]
@@ -413,7 +426,7 @@ if __name__ == "__main__":
         Tfirst, Tstop = main(args)
         results[algo] = [Tfirst,Tstop]
     
-    print(f'\n\nFinal results: env = {args.env_id}')
+    print(f'\n\nFinal results: env = {args.env_id}, curiosity = {args.curiosity}')
     print('----------------------------------------')
     for key,val in results.items():
         print(f'{key}: Tsolve, Tconverge = {val[0]}, {val[1]}')
