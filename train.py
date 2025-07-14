@@ -21,10 +21,14 @@ from stable_baselines3.common.type_aliases import ReplayBufferSamples
 from stable_baselines3.common.evaluation    import evaluate_policy
 from collections import namedtuple
 import numpy as np
-import torch
+import torch as th
 from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.base_class import BaseAlgorithm
+from stable_baselines3.common.env_util import make_vec_env
 
+# Add for RLeXplore (install via: pip install rllte-core)
+from rllte.xplore.reward import ICM, E3B
 
 class SolveLoggerCallback(BaseCallback):
     """
@@ -188,6 +192,120 @@ def make_vec(env_id, seed):
     return venv
 
 
+class RLeXploreWithOnPolicyRL(BaseCallback):
+    """
+    A custom callback for combining RLeXplore and on-policy algorithms from SB3.
+    """
+    def __init__(self, irs, verbose=0):
+        super(RLeXploreWithOnPolicyRL, self).__init__(verbose)
+        self.irs = irs
+        self.buffer = None
+
+    def init_callback(self, model: BaseAlgorithm) -> None:
+        super().init_callback(model)
+        self.buffer = self.model.rollout_buffer
+
+    def _on_step(self) -> bool:
+        """
+        This method will be called by the model after each call to `env.step()`.
+
+        :return: (bool) If the callback returns False, training is aborted early.
+        """
+        observations = self.locals["obs_tensor"].float()
+        device = observations.device
+        actions = th.as_tensor(self.locals["actions"], device=device).float()
+        rewards = th.as_tensor(self.locals["rewards"], device=device).float()
+        dones = th.as_tensor(self.locals["dones"], device=device).float()
+        next_observations = th.as_tensor(self.locals["new_obs"], device=device).float()
+
+        # ===================== watch the interaction ===================== #
+        self.irs.watch(observations, actions, rewards, dones, dones, next_observations)
+        # ===================== watch the interaction ===================== #
+        return True
+
+    def _on_rollout_end(self) -> None:
+        # ===================== compute the intrinsic rewards ===================== #
+        # prepare the data samples
+        obs = th.as_tensor(self.buffer.observations).float()
+        # get the new observations
+        new_obs = obs.clone()
+        new_obs[:-1] = obs[1:]
+        new_obs[-1] = th.as_tensor(self.locals["new_obs"]).float()
+        actions = th.as_tensor(self.buffer.actions).float()
+        rewards = th.as_tensor(self.buffer.rewards).float()
+        dones = th.as_tensor(self.buffer.episode_starts).float()
+        # compute the intrinsic rewards
+        intrinsic_rewards = self.irs.compute(
+            samples=dict(observations=obs, actions=actions, 
+                         rewards=rewards, terminateds=dones, 
+                         truncateds=dones, next_observations=new_obs),
+            sync=True)
+        # add the intrinsic rewards to the buffer
+        self.buffer.advantages += intrinsic_rewards.cpu().numpy()
+        self.buffer.returns += intrinsic_rewards.cpu().numpy()
+        # ===================== compute the intrinsic rewards ===================== #
+
+class RLeXploreWithOffPolicyRL(BaseCallback):
+    """
+    A custom callback for combining RLeXplore and off-policy algorithms from SB3. 
+    """
+    def __init__(self, irs, verbose=0):
+        super(RLeXploreWithOffPolicyRL, self).__init__(verbose)
+        self.irs = irs
+        self.buffer = None
+
+    def init_callback(self, model: BaseAlgorithm) -> None:
+        super().init_callback(model)
+        self.buffer = self.model.replay_buffer
+        
+
+    def _on_step(self) -> bool:
+        """
+        This method will be called by the model after each call to `env.step()`.
+
+        :return: (bool) If the callback returns False, training is aborted early.
+        """
+        device = self.irs.device
+        obs = th.as_tensor(self.locals['self']._last_obs, device=device).float()
+        actions = th.as_tensor(self.locals["actions"], device=device).float()
+        rewards = th.as_tensor(self.locals["rewards"], device=device).float()
+        dones = th.as_tensor(self.locals["dones"], device=device).float()
+        next_obs = th.as_tensor(self.locals["new_obs"], device=device).float()
+
+        # ===================== watch the interaction ===================== #
+        self.irs.watch(obs, actions, rewards, dones, dones, next_obs)
+        # ===================== watch the interaction ===================== #
+        
+        # ===================== compute the intrinsic rewards ===================== #
+        intrinsic_rewards = self.irs.compute(samples={'observations':obs.unsqueeze(0), 
+                                            'actions':actions.unsqueeze(0), 
+                                            'rewards':rewards.unsqueeze(0),
+                                            'terminateds':dones.unsqueeze(0),
+                                            'truncateds':dones.unsqueeze(0),
+                                            'next_observations':next_obs.unsqueeze(0)}, 
+                                            sync=False)
+        # ===================== compute the intrinsic rewards ===================== #
+
+        try:
+            # add the intrinsic rewards to the original rewards
+            self.locals['rewards'] += intrinsic_rewards.cpu().numpy().squeeze()
+            # update the intrinsic reward module
+            replay_data = self.buffer.sample(batch_size=self.irs.batch_size)
+            self.irs.update(samples={'observations': th.as_tensor(replay_data.observations).unsqueeze(1).to(device).float(), # (n_steps, n_envs, *obs_shape)
+                                     'actions': th.as_tensor(replay_data.actions).unsqueeze(1).to(device).float(),
+                                     'rewards': th.as_tensor(replay_data.rewards).to(device).float(),
+                                     'terminateds': th.as_tensor(replay_data.dones).to(device).float(),
+                                     'truncateds': th.as_tensor(replay_data.dones).to(device).float(),
+                                     'next_observations': th.as_tensor(replay_data.next_observations).unsqueeze(1).to(device).float()
+                                     })
+        except:
+            pass
+
+        return True
+
+    def _on_rollout_end(self) -> None:
+        pass
+
 # ───────────── main ─────────────
 def main(args):
     run_name = f"{args.env_id}_{args.algo}_{int(time.time())}"
@@ -201,13 +319,12 @@ def main(args):
     eval_cb  = EvalCallback(eval_env, eval_freq=args.eval_freq,
                             deterministic=True, verbose=0)
     solve_logger = SolveLoggerCallback(eval_env, args.algo)
-    callback     = CallbackList([solve_logger, eval_cb])
+    callback = CallbackList([solve_logger, eval_cb])
 
     # ╭──────────────── select & build model ───────────────╮
     if args.algo in {"ppo", "a2c"}:
         Algo = PPO if args.algo == "ppo" else A2C
         env  = make_vec(args.env_id, args.seed)
-
         model = Algo("MlpPolicy", env,
                      tensorboard_log = tb.log_dir,
                      seed            = args.seed,
@@ -228,7 +345,7 @@ def main(args):
             batch_size             = 256,
             tensorboard_log        = tb.log_dir,
             seed                   = args.seed,
-            device                 = device,
+            device          = device,
         )
 
     else:  # SAC
@@ -237,6 +354,20 @@ def main(args):
                             autotune   = True,
                             alpha_init = 0.05)
     # ╰──────────────────────────────────────────────────────╯
+
+    if args.curiosity is not None:
+        if args.curiosity == 'ICM':
+            irs = ICM(env, device=device)
+        elif args.curiosity == 'E3B':
+            irs = E3B(env, device=device)
+        else:
+            raise ValueError(f"Unknown curiosity method: {args.curiosity}")
+
+        if args.algo in {"ppo", "a2c"}:
+            irs_callback = RLeXploreWithOnPolicyRL(irs)
+        else:
+            irs_callback = RLeXploreWithOffPolicyRL(irs)
+        callback.append(irs_callback)
 
 
     # --- evaluate before training ---
@@ -272,6 +403,7 @@ if __name__ == "__main__":
     p.add_argument("--seed",             type=int, default=1)
     p.add_argument("--cuda",             action="store_true")
     p.add_argument("--eval-freq",        type=int, default=10_000)
+    p.add_argument("--curiosity",        type=str, default=None, choices=[None, "ICM", "E3B"])
     args = p.parse_args()
 
     algos = ["ppo", "a2c", "dqn", "dqn-per"]
