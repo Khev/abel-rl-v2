@@ -93,7 +93,7 @@ class TrainingLogger(BaseCallback):
     Callback for logging reward statistics, evaluating the agent, and saving checkpoints at regular intervals.
     """
 
-    def __init__(self, log_interval=1000, eval_interval=10000, save_dir=".", verbose=1, eval_env=None):
+    def __init__(self, log_interval=1000, eval_interval=10000, save_dir=".", verbose=1, gen=None, eval_env=None):
         super(TrainingLogger, self).__init__(verbose)
         self.log_interval = log_interval
         self.eval_interval = log_interval
@@ -103,6 +103,7 @@ class TrainingLogger(BaseCallback):
         self.T_solve = None
         self.T_converge = None
         self.early_stopping = False
+        self.gen = gen
 
         # We'll defer initialization of results_train until training actually starts:
         self.results_train = {}
@@ -127,54 +128,45 @@ class TrainingLogger(BaseCallback):
         """
         # 'train_eqns' presumably is an attribute in your env that lists all training eqns
         # Because we are inside a DummyVecEnv, we can do get_attr('train_eqns')[0].
-        eqns_attr = self.training_env.get_attr('train_eqns')
-        if eqns_attr:
-            train_eqns = eqns_attr[0]
+        train_eqns = getattr(self.training_env.envs[0], 'train_eqns', None)
+        self.train_eqns = train_eqns
+        if train_eqns is not None:
             self.results_train = {eqn: None for eqn in train_eqns}
         else:
             print("Warning: no 'train_eqns' found in env; results_train will remain empty.")
 
-        # If you have test_eqns, you can do the same for results_test (though you might
-        # want to populate it after your final evaluation, see below).
-        test_eqns_attr = self.training_env.get_attr('test_eqns')
-        if test_eqns_attr:
-            test_eqns = test_eqns_attr[0]
+        test_eqns = getattr(self.training_env.envs[0], 'test_eqns', None)
+        if test_eqns is not None:
             self.results_test = {eqn: None for eqn in test_eqns}
         else:
             print("No 'test_eqns' found in env. results_test will remain empty.")
+        self.test_eqns = test_eqns
 
         if self.eval_env:
             print("\nInitial evaluation (t=0)...")
-            # train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
-            # print_eval_results(train_results, label="Train")
+            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
+            print_eval_results(train_results, label="Train")
 
-            # test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
-            # print_eval_results(test_results, label="Test")
-
-            print('Solve counts')
-            all_solve_counts = self.eval_env.get_attr("solve_counts")[0]
-            for eqn, solve_count in all_solve_counts.items():
-                print(f"{eqn}: {solve_count}")
-            print('\n')
+            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
+            print_eval_results(test_results, label="Test")
 
             self.logged_steps.append(0)  # Log step 0
 
-            # train_acc = np.mean(list(train_results.values()))
-            # test_acc = np.mean(list(test_results.values()))
-            # self.train_accuracy.append(np.mean(list(train_results.values())))
-            # self.test_accuracy.append(np.mean(list(test_results.values())))
+            train_acc = np.mean(list(train_results.values()))
+            test_acc = np.mean(list(test_results.values()))
+            self.train_accuracy.append(np.mean(list(train_results.values())))
+            self.test_accuracy.append(np.mean(list(test_results.values())))
 
-            # train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
-            # test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
-            # self.train_accuracy_one_shot.append(train_acc_one_shot)
-            # self.test_accuracy_one_shot.append(test_acc_one_shot)
-            # self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
+            train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
+            test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
+            self.train_accuracy_one_shot.append(train_acc_one_shot)
+            self.test_accuracy_one_shot.append(test_acc_one_shot)
+            self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
 
     
-            # print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
-            # print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
-            # print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
-
+            print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
+            print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
+            print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
 
 
     def _on_step(self) -> bool:
@@ -214,46 +206,50 @@ class TrainingLogger(BaseCallback):
         #Evaluation at intervals
         if self.eval_env and self.n_calls % self.eval_interval == 0:
 
-            print("\nRunning evaluation...")
-            # train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
-            # print_eval_results(train_results, label='Train')
+            if self.gen == 'random':
+                print('\n--------------------')
+                print("Eqn: Sample, solve counts")
+                print('--------------------')
+                solve_counts  = self.eval_env.get_attr("solve_counts")[0]
+                sample_counts = self.eval_env.get_attr("sample_counts")[0]
+                for eqn in sorted(set(solve_counts) | set(sample_counts)):
+                    s_cnt  = sample_counts.get(eqn, 0)
+                    sol_cnt = solve_counts.get(eqn, 0)
+                    print(f"{eqn}: {s_cnt}, {sol_cnt}")
+                print()
+            else:
 
-            # test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
-            # print_eval_results(test_results, label='Test')
+                print("\nRunning evaluation...")
+                #train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
+                train_results = evaluate_agent(self.model, self.eval_env, self.train_eqns, n_eval_episodes=10)
 
-            print('Solve counts')
-            all_solve_counts = self.eval_env.get_attr("solve_counts")[0]
-            for eqn, solve_count in all_solve_counts.items():
-                print(f"{eqn}: {solve_count}")
-            print('\n')
+                print_eval_results(train_results, label='Train')
 
-            # train_acc = np.mean(list(train_results.values()))
-            # test_acc = np.mean(list(test_results.values()))
-            # self.train_accuracy.append(np.mean(list(train_results.values())))
-            # self.test_accuracy.append(np.mean(list(test_results.values())))
+                #test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
+                test_results = evaluate_agent(self.model, self.eval_env, self.test_eqns, n_eval_episodes=10)
+                print_eval_results(test_results, label='Test')
 
-            # train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
-            # test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
-            # self.train_accuracy_one_shot.append(train_acc_one_shot)
-            #self.test_accuracy_one_shot.append(test_acc_one_shot)
+                self.logged_steps.append(self.num_timesteps)
 
-            #self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
-            # print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
-            # print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
-            # print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
+                train_acc = np.mean(list(train_results.values()))
+                test_acc = np.mean(list(test_results.values()))
+                self.train_accuracy.append(np.mean(list(train_results.values())))
+                self.test_accuracy.append(np.mean(list(test_results.values())))
 
-            # Early stopping
-            #if test_acc == 100.0 and train_acc == 100.0:
-            # if train_acc == 100.0:
-            #     print(Fore.YELLOW + f"'train_acc = test_acc = 100. Early stopping step {self.num_timesteps}!" + Style.RESET_ALL)
-            #     return False
+                train_acc_one_shot = np.mean([100 if i > 0 else 0 for i in train_results.values()])
+                test_acc_one_shot = np.mean([100 if i>0 else 0 for i in test_results.values()])
+                self.train_accuracy_one_shot.append(train_acc_one_shot)
+                self.test_accuracy_one_shot.append(test_acc_one_shot)
 
+                self.max_test_acc_one_shot = max(self.max_test_acc_one_shot, test_acc_one_shot)
+                print(Fore.GREEN + f'train: acc, acc_one_shot = {train_acc:.2f}, {train_acc_one_shot:.2f}' + Style.RESET_ALL)
+                print(Fore.GREEN + f'test: acc, acc_one_shot = {test_acc:.2f}, {test_acc_one_shot:.2f}' + Style.RESET_ALL)
+                print(Fore.RED + f'max test acc one shot = {self.max_test_acc_one_shot:.2f}', Style.RESET_ALL)
 
-        # Save model checkpoint at intervals
-        # if self.n_calls % self.eval_interval == 0:
-        #     save_path = os.path.join(self.save_dir, f"checkpoint_{self.num_timesteps}.zip")
-        #     self.model.save(save_path)
-        #     print(f"Checkpoint saved: {save_path}")
+                # Early stopping
+                if test_acc == 100.0 and train_acc == 100.0:
+                    print(Fore.YELLOW + f"'train_acc = test_acc = 100. Early stopping step {self.num_timesteps}!" + Style.RESET_ALL)
+                    return False
 
         return True  # Continue training
 
@@ -263,41 +259,6 @@ class TrainingLogger(BaseCallback):
         Called when training finishes. Plots train vs test accuracy curves.
         """
         print("\nFinal Training Completed. Plotting Learning Curves...")
-
-        # plt.figure(figsize=(10, 6))
-        # plt.plot(self.logged_steps, self.train_accuracy, label="Train Accuracy", 
-        #         marker='o', linestyle='-', color='b', markersize=6, linewidth=2)
-        # # plt.plot(self.logged_steps, self.test_accuracy, label="Test Accuracy", 
-        # #         marker='s', linestyle='--', color='r', markersize=6, linewidth=2)
-        # plt.plot(self.logged_steps, self.train_accuracy_one_shot, label="Train Accuracy (1-shot)", 
-        #         marker='D', linestyle='-.', color='g', markersize=6, linewidth=2)
-        # # plt.plot(self.logged_steps, self.test_accuracy_one_shot, label="Test Accuracy (1-shot)", 
-        # #         marker='^', linestyle=':', color='m', markersize=6, linewidth=2)
-
-        # plt.xlabel("Training Steps")
-        # plt.ylabel("Success Rate (%)")
-        # plt.title("Train vs. Test Learning Progress")
-        # plt.legend()
-        # plt.grid()
-        # plt.ylim([0,105])
-        # plt.savefig(os.path.join(self.save_dir, "learning_curve.png"))
-        # #plt.show()  # Only if running interactively
-        # plt.close()
-
-
-        # # Save learning curve data
-        # save_path = os.path.join(self.save_dir, "learning_progress.pkl")
-        # with open(save_path, "wb") as f:
-        #     pickle.dump({
-        #         "steps": self.logged_steps,
-        #         "train_success": self.train_accuracy,
-        #         "train_success_one_shot": self.train_accuracy_one_shot
-        #         # "test_success": self.test_accuracy,
-        #         # "test_success_one_shot": self.test_accuracy_one_shot
-
-        #     }, f)
-        # print(f"Saved learning progress to {save_path}")
-
 
 
 class IntrinsicReward(BaseCallback):
@@ -419,7 +380,7 @@ def main(args):
     agent = get_agent(args.agent_type,env,**sb3_kwargs) 
 
     # Callback
-    callback = TrainingLogger(log_interval=args.log_interval, save_dir=args.save_dir, eval_env=env)
+    callback = TrainingLogger(log_interval=args.log_interval, save_dir=args.save_dir, eval_env=env, gen=args.generalization)
 
     # Intrinsic reward
     irs = get_intrinsic_reward(args.intrinsic_reward, env)
@@ -432,7 +393,7 @@ def main(args):
     agent.learn(total_timesteps=args.Ntrain, callback=callback)
 
     # Save model
-    agent.save(os.path.join(args.save_dir, f"{args.agent_type}_trained_model"))
+    agent.save(os.path.join(args.save_dir, f"{args.agent_type}_{args.intrinsic_reward}_trained_model"))
     print(f"Model saved to {args.save_dir}")
 
     # Evaluation
@@ -490,7 +451,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--agent_type', type=str, default='ppo-mask')
     parser.add_argument('--state_rep', type=str, default='integer_1d', help='State representation/encoding')
-    parser.add_argument('--Ntrain', type=int, default=3*10**6, help='Number of training steps')
+    parser.add_argument('--Ntrain', type=int, default=10**4, help='Number of training steps')
     parser.add_argument('--intrinsic_reward', type=str, default='ICM', choices=['ICM', 'E3B', 'RIDE', 'None'], \
                          help='Type of intrinsic reward')
     parser.add_argument("--normalize_rewards", type=lambda v: v.lower() in ("yes", "true", "t", "1"), \
@@ -519,7 +480,7 @@ if __name__ == "__main__":
 
     # Generalization parameters
     parser.add_argument('--level', type=int, default=7)
-    parser.add_argument('--generalization', type=str, default='random',choices=['lexical', 'structural', 'shallow','deep', 'random'])
+    parser.add_argument('--generalization', type=str, default='poesia', choices=['lexical', 'structural', 'shallow','deep', 'random', 'poesia'])
 
     args = parser.parse_args()
     
@@ -529,7 +490,7 @@ if __name__ == "__main__":
         args.log_interval = int(0.1 * args.Ntrain)
     
     # Set save_dir
-    args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}/{args.agent_type}/n_layer{args.n_layers}")
+    args.save_dir = os.path.join(args.save_dir, f"{args.generalization}/level{args.level}/{args.agent_type}_{args.intrinsic_reward}/")
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Check for invalid (agent, state_rep pairs)
