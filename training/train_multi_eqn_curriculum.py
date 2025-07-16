@@ -60,7 +60,7 @@ def print_results_dict_as_df(title, d):
 def get_action_mask(env):
     return env.action_mask
 
-def evaluate_agent(agent, env, equation_list, n_eval_episodes=10):
+def evaluate_agent(agent, env, equation_list, n_eval_episodes=1):
     """
     Evaluate agent on each eqn in equation_list for n_eval_episodes per eqn.
     Returns a dict eqn -> success percentage.
@@ -77,7 +77,7 @@ def evaluate_agent(agent, env, equation_list, n_eval_episodes=10):
             #breakpoint()
             done = [False]  # Ensure it's a list/array for vectorized envs
             while not done[0]:  # Extract first element
-                action, _ = agent.predict(obs, deterministic=False)
+                action, _ = agent.predict(obs, deterministic=True)
                 obs, reward, done, info = env.step(action)
                 if info[0].get('is_solved', False):
                     eqn_successes += 1
@@ -144,10 +144,10 @@ class TrainingLogger(BaseCallback):
 
         if self.eval_env:
             print("\nInitial evaluation (t=0)...")
-            train_results = evaluate_agent(self.model, self.eval_env, train_eqns, n_eval_episodes=10)
+            train_results = evaluate_agent(self.model, self.eval_env, train_eqns)
             print_eval_results(train_results, label="Train")
 
-            test_results = evaluate_agent(self.model, self.eval_env, test_eqns, n_eval_episodes=10)
+            test_results = evaluate_agent(self.model, self.eval_env, test_eqns)
             print_eval_results(test_results, label="Test")
 
             self.logged_steps.append(0)  # Log step 0
@@ -182,6 +182,9 @@ class TrainingLogger(BaseCallback):
             main_eqn, lhs, rhs = info['main_eqn'], info['lhs'], info['rhs']
             #print(Fore.YELLOW + f'\nSolved {main_eqn} = 0 ==> {lhs} = {rhs} at Nstep = {self.num_timesteps}' + Style.RESET_ALL)
             self.T_solve = self.num_timesteps
+
+            if main_eqn not in self.results_train:
+                self.results_train[main_eqn] = None
 
             if self.results_train[main_eqn] == None:
                 self.results_train[main_eqn] = self.num_timesteps
@@ -221,12 +224,12 @@ class TrainingLogger(BaseCallback):
 
                 print("\nRunning evaluation...")
                 #train_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('train_eqns')[0], n_eval_episodes=10)
-                train_results = evaluate_agent(self.model, self.eval_env, self.train_eqns, n_eval_episodes=10)
+                train_results = evaluate_agent(self.model, self.eval_env, self.train_eqns)
 
                 print_eval_results(train_results, label='Train')
 
                 #test_results = evaluate_agent(self.model, self.eval_env, self.eval_env.get_attr('test_eqns')[0], n_eval_episodes=10)
-                test_results = evaluate_agent(self.model, self.eval_env, self.test_eqns, n_eval_episodes=10)
+                test_results = evaluate_agent(self.model, self.eval_env, self.test_eqns)
                 print_eval_results(test_results, label='Test')
 
                 self.logged_steps.append(self.num_timesteps)
@@ -341,17 +344,18 @@ def main(args):
     print_parameters(params)
 
 
-    # Make env
-    env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
-         generalization=args.generalization)
-    if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn','ppo-gnn1']:
-        env = ActionMasker(env, get_action_mask)
-    env = DummyVecEnv([lambda: Monitor(env)])
+    # # Make env
+    # env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, level=args.level, \
+    #      generalization=args.generalization)
+    # if args.agent_type in ["ppo-mask",'ppo-cnn','ppo-gnn','ppo-gnn1']:
+    #     env = ActionMasker(env, get_action_mask)
+    # env = DummyVecEnv([lambda: Monitor(env)])
 
     #Make env
+    use_mem = True if args.use_memory == 'true' else False
     def make_env():
         env = multiEqn(normalize_rewards=args.normalize_rewards, state_rep=args.state_rep, \
-             level=args.level, generalization=args.generalization)
+             level=args.level, generalization=args.generalization, use_memory=use_mem)
         if args.agent_type in ["ppo-mask", "ppo-cnn", "ppo-gnn", "ppo-gnn1"]:
             env = ActionMasker(env, get_action_mask)
         return env
@@ -377,6 +381,10 @@ def main(args):
     net_arch = [args.hidden_dim] * args.n_layers
     policy_kwargs = {"net_arch": net_arch}
     sb3_kwargs["policy_kwargs"] = policy_kwargs
+    if args.agent_type == 'dqn':
+        sb3_kwargs = {
+                "gamma": args.gamma,
+            }
     agent = get_agent(args.agent_type,env,**sb3_kwargs) 
 
     # Callback
@@ -395,6 +403,13 @@ def main(args):
     # Save model
     agent.save(os.path.join(args.save_dir, f"{args.agent_type}_{args.intrinsic_reward}_trained_model"))
     print(f"Model saved to {args.save_dir}")
+
+    # Save memory from env (pickle the SolveMemory instance)
+    mem_path = os.path.join(args.save_dir, f"{args.agent_type}_{args.intrinsic_reward}_memory.pkl")
+    mem = env.get_attr('mem')[0]  # Extract from VecEnv (first env)
+    with open(mem_path, 'wb') as f:
+        pickle.dump(mem, f)
+    print(f"Memory saved to {mem_path}")
 
     # Evaluation
     print_header('Evaluating trained agent', color='cyan')
@@ -444,7 +459,7 @@ def main(args):
     # extract off max
     max_test_acc_one_shot = callback.max_test_acc_one_shot
 
-    return train_results, test_results, max_test_acc_one_shot
+    return train_results, results_test, max_test_acc_one_shot
 
 
 if __name__ == "__main__":
@@ -463,11 +478,11 @@ if __name__ == "__main__":
 
 
     # Agent aprqameters
-    parser.add_argument('--ent_coef', type=float, default=0.0, help='Entropy coefficient for PPO or MaskablePPO')
+    parser.add_argument('--ent_coef', type=float, default=0.05, help='Entropy coefficient for PPO or MaskablePPO')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate for the RL agent')
     parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor (gamma) for the RL agent')
     parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps per rollout in PPO')
-    parser.add_argument('--batch_size', type=int, default=64, help='Minibatch size for each gradient update')
+    parser.add_argument('--batch_size', type=int, default=256, help='Minibatch size for each gradient update')
     parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs to train on each batch')
     parser.add_argument('--gae_lambda', type=float, default=0.95, help='GAE lambda')
     parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function loss coefficient')
@@ -479,14 +494,15 @@ if __name__ == "__main__":
     parser.add_argument('--hidden_dim', type=int, default=256, help='Number of hidden units per layer')
 
     # Generalization parameters
-    parser.add_argument('--level', type=int, default=7)
-    parser.add_argument('--generalization', type=str, default='poesia', choices=['lexical', 'structural', 'shallow','deep', 'random', 'poesia'])
+    parser.add_argument('--level', type=int, default=8)
+    parser.add_argument('--generalization', type=str, default='poesia', choices=['lexical', 'structural', 'shallow','deep', 'random', 'poesia', 'poesia-full'])
+    parser.add_argument('--use_memory', type=str, default='true')
 
     args = parser.parse_args()
     
     # Set default log_interval if not provided
     if args.log_interval is None:
-        # args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
+        #args.log_interval = min(int(0.1 * args.Ntrain), 10**4)   
         args.log_interval = int(0.1 * args.Ntrain)
     
     # Set save_dir
@@ -511,13 +527,3 @@ if __name__ == "__main__":
     print(envs.multi_eqn_curriculum.__file__)
     
     results_train, results_test, max_test_acc_one_shot = main(args)
-
-
-
-
-
-
-
-
-
-

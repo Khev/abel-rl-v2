@@ -330,7 +330,53 @@ def check_valid_eqn(lhs, rhs):
     return True, lhs, rhs
 
 
+from sympy import symbols, ratsimp, powdenest  # add these at top of utils/utils_env.py
+
 def check_eqn_solved(lhs, rhs, main_eqn):
+    """
+    Returns True iff the equation `lhs = rhs` is solved for x.
+
+    A “solved” equation has the variable x isolated on one side *and*
+    x does **not** appear on the other side.  The other side can be any
+    symbolic expression that’s free of x (e.g. −b, a/3, sqrt(2), …).
+
+    Parameters
+    ----------
+    lhs, rhs : sympy.Expr
+        Current left- and right-hand sides of the equation.
+    main_eqn : sympy.Expr
+        The original equation (assumed of the form f(x) = 0) used to
+        verify that the candidate solution indeed satisfies it.
+
+    Returns
+    -------
+    bool
+        True if solved, False otherwise.
+    """
+    x = symbols('x')
+
+    # x must appear on exactly one side, and the opposite side must be x-free
+    if lhs != x or x in rhs.free_symbols:
+        return False
+
+    # Substitute the candidate back into the original equation
+    residual = main_eqn.subs(x, rhs)
+
+    # Cheap algebraic checks before falling back to expensive simplification
+    if residual == 0 or residual.is_zero:
+        return True
+    if residual.expand() == 0:
+        return True
+    if powdenest(residual, force=True) == 0:
+        return True
+    if ratsimp(residual) == 0:
+        return True
+
+    return False
+
+
+
+def check_eqn_solved_old(lhs, rhs, main_eqn):
     """Checks if the equation is solved efficiently."""
     
     x = symbols('x')
@@ -339,32 +385,30 @@ def check_eqn_solved(lhs, rhs, main_eqn):
     if lhs != x:
         return False
 
-    # Check if rhs is a constant or does not contain x
-    if isinstance(rhs, (int, float, Number)) or x not in rhs.free_symbols:
+    if x in rhs.free_symbols:
+        return False
 
-        # Substitute x = rhs into the main equation; should be zero
-        sol = main_eqn.subs(x, rhs)
+    # Substitute x = rhs into the main equation; should be zero
+    sol = main_eqn.subs(x, rhs)
 
-        # Fast checks before calling simplify
-        if sol == 0 or sol.is_zero:
-            return True
+    # Fast checks before calling simplify
+    if sol == 0 or sol.is_zero:
+        return True
 
-        # Use a cheaper method before full simplify
-        if sol.expand() == 0:
-            return True
+    # Use a cheaper method before full simplify
+    if sol.expand() == 0:
+        return True
 
-        # Check for sqrts
-        if powdenest(sol, force=True) == 0:
-            return True
+    # Check for sqrts
+    if powdenest(sol, force=True) == 0:
+        return True
 
-        # Use cheaper method first
-        if ratsimp(sol) == 0:
-            return True
+    # Use cheaper method first
+    if ratsimp(sol) == 0:
+        return True
 
-        return False  # Avoid full simplify unless necessary
+    return False  # Avoid full simplify unless necessary
     
-    return False
-
 
 
 ######################################## 2D encoding #########################################
@@ -813,8 +857,30 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
         train_eqns (list): List of sympified train equations.
         test_eqns (list): List of sympified test equations.
     """
-    if generalization not in ["shallow", "lexical", "structural", "deep", "random"]:
+    if generalization not in ["shallow", "lexical", "structural", "deep", "random", "poesia", "poesia-full"]:
         raise ValueError(f"Invalid generalization type '{generalization}'. Choose 'shallow' or 'deep'.")
+
+    if generalization == 'poesia':
+        train_eqns_path = 'equation_templates/poesia/eqns.txt'
+        with open(train_eqns_path) as f:
+            raw = [line.strip() for line in f if line.strip()]   # keep non-blank lines
+
+        rng = np.random.default_rng(42)      # reproducible shuffle
+        rng.shuffle(raw)                     # in-place, no duplicates
+        n_train = int(0.9 * len(raw))
+
+        train_eqns = [sympify(s) for s in raw[:n_train]]
+        test_eqns  = [sympify(s) for s in raw[n_train:]]
+
+        return train_eqns, test_eqns
+
+    if generalization == 'poesia-full':
+        test_eqns_path = 'equation_templates/poesia/test_equations.txt'
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+            train_eqns = []  # these are generated on the fly.
+        return train_eqns, test_eqns
+
 
     # Construct path based on generalization type
     level_dir = os.path.join(dirn, generalization, f"level{level}")

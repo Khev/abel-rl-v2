@@ -11,6 +11,9 @@ from stable_baselines3.common.policies import ActorCriticPolicy  # ✅ Needed fo
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor  # ✅ Needed for EquationCNN
 from stable_baselines3.common.utils import get_device  # ✅ Not needed anymore (you define your own `get_device`)
 from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
+from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
+from collections import namedtuple
+import numpy as np
 
 from torch_geometric.nn import GCNConv, global_mean_pool
 
@@ -41,25 +44,129 @@ def get_device():
         return 'cpu'
 
 
+# def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
+#     """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib, PPO with CNN, and PPO with GNN."""
+
+#     agents = {
+#         "dqn": DQN,
+#         "ppo": PPO,
+#         "a2c": A2C,
+#         "ppo-mask": MaskablePPO,
+#         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
+#         "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, **kwargs),
+#         # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0, **kwargs),
+#         #"ppo-gnn1": lambda policy, env, **kwargs: MaskablePPO(PPOGNN1Policy, env, ent_coef=0.1, **kwargs)
+#     }
+
+
+#         model = DQN(
+#             "MlpPolicy", env,
+#             buffer_size            = 100_000,
+#             replay_buffer_class    = PERBuffer,
+#             replay_buffer_kwargs   = dict(alpha=0.6, beta=0.4, eps=1e-5),
+#             learning_starts        = 1_000,
+#             batch_size             = 256,
+#             tensorboard_log        = tb.log_dir,
+#             seed                   = args.seed,
+#             device          = device,
+#         )
+    
+#     if agent_type not in agents:
+#         raise ValueError(f"Unsupported agent type: {agent_type}. Choose from {list(agents.keys())}")
+
+#     model = agents[agent_type](policy, env, **kwargs)
+#     return model
+
+# Extend the SB3 replay samples tuple with weights and indices
+PrioritizedReplayBufferSamples = namedtuple(
+    "PrioritizedReplayBufferSamples",
+    ReplayBufferSamples._fields + ("weights", "indices")
+)
+
+class PERBuffer(ReplayBuffer):
+    """
+    Prioritised Experience Replay for SB3 DQN.
+    Usage in DQN(...) constructor:
+        buffer_size=100_000,
+        replay_buffer_class=PERBuffer,
+        replay_buffer_kwargs=dict(alpha=0.6, beta=0.4, eps=1e-5)
+    """
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space,
+        action_space,
+        device: torch.device,
+        alpha: float = 0.6,
+        beta: float = 0.4,
+        eps: float = 1e-5,
+        **kwargs
+    ):
+        super().__init__(buffer_size, observation_space, action_space, device, **kwargs)
+        self.alpha = alpha
+        self.beta  = beta
+        self.eps   = eps
+        self.priorities = np.zeros((self.buffer_size,), dtype=np.float32)
+
+    def add(self, *args, **kwargs):
+        idx = self.pos
+        super().add(*args, **kwargs)
+        # New transitions get max priority so they’re sampled at least once
+        self.priorities[idx] = self.priorities.max() if (self.full or idx > 0) else 1.0
+
+    def sample(self, batch_size: int, env=None) -> PrioritizedReplayBufferSamples:
+        # 1. Compute sampling probabilities
+        if self.full:
+            probs = self.priorities ** self.alpha
+        else:
+            probs = self.priorities[: self.pos] ** self.alpha
+        probs /= probs.sum()
+
+        # 2. Draw indices according to probabilities
+        indices = np.random.choice(len(probs), batch_size, p=probs)
+
+        # 3. Get the base samples (obs, actions, ...)
+        base_samples = super()._get_samples(indices, env)
+
+        # 4. Compute importance sampling weights
+        weights = (len(probs) * probs[indices]) ** (-self.beta)
+        weights = weights / weights.max()  # normalize to [0,1]
+
+        # 5. Return extended namedtuple
+        return PrioritizedReplayBufferSamples(
+            *base_samples,
+            torch.as_tensor(weights, device=self.device, dtype=torch.float32),
+            indices,
+        )
+
+    def update_priorities(self, indices, td_errors):
+        # After learning, call model.replay_buffer.update_priorities(...)
+        self.priorities[indices] = np.abs(td_errors) + self.eps
+    
+
 def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
     """Returns the appropriate RL agent, including PPO-Mask from sb3-contrib, PPO with CNN, and PPO with GNN."""
 
     agents = {
-        "dqn": DQN,
+        "dqn": lambda policy, env, **kwargs: DQN(
+            policy, env,
+            replay_buffer_class=PERBuffer,
+            replay_buffer_kwargs=dict(alpha=0.6, beta=0.4, eps=1e-5),
+            learning_starts=10**5,
+            **kwargs
+        ),
         "ppo": PPO,
         "a2c": A2C,
         "ppo-mask": MaskablePPO,
         "ppo-cnn": lambda policy, env, **kwargs: MaskablePPO(CustomCNNPolicy, env, **kwargs),
         "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, **kwargs),
-        # "ppo-gnn": lambda policy, env, **kwargs: MaskablePPO(CustomGNNPolicy, env, ent_coef=0, **kwargs),
-        #"ppo-gnn1": lambda policy, env, **kwargs: MaskablePPO(PPOGNN1Policy, env, ent_coef=0.1, **kwargs)
+        # Add other custom agents as needed
     }
-    
+
     if agent_type not in agents:
         raise ValueError(f"Unsupported agent type: {agent_type}. Choose from {list(agents.keys())}")
 
-    model = agents[agent_type](policy, env, **kwargs)
-    return model
+    return agents[agent_type](policy, env, **kwargs)
 
 
 

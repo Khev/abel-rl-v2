@@ -5,6 +5,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import logging
 import numpy as np
 from sympy import sympify
+import re
+from sympy import sympify, symbols
 from gymnasium import spaces, Env
 from utils.custom_functions import *
 from operator import add, sub, mul, truediv
@@ -17,6 +19,26 @@ logger = logging.getLogger(__name__)
 import hashlib
 import numpy as np
 import faiss                     # pip install faiss-cpu
+
+
+letter_map = {                   # 1→a, 2→b, …, 26→z
+    i: chr(ord('a') + i - 1) for i in range(1, 27)
+}
+
+def _int_to_symbol(n: int) -> str:
+    """
+    0   → 'k'
+    1   → 'a'
+    …   → …
+    -3  → '-c'
+    10  → 'j'
+    """
+    if n == 0:
+        return 'k'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    base = letter_map.get(n, f'c{n}')   # fallback name if |n|>26
+    return f'{sign}{base}'
 
 
 def _is_effective(lhs_old, rhs_old, lhs_new, rhs_new) -> bool:
@@ -71,6 +93,8 @@ class SolveMemory:
         self.obs_store: list[np.ndarray] = []    # flattened observations
         self.act_store: list[int]        = []    # matching discrete actions
         self._hash_set: set[str]         = set() # for de-duplication
+
+        self.memory_readable = {}
 
     # ------------------------------------------------------------------ #
     # utilities
@@ -173,7 +197,8 @@ class multiEqn(Env):
                  verbose=False,
                  cache=False, 
                  level=4, 
-                 generalization='structural') -> None:
+                 generalization='structural',
+                 use_memory=True) -> None:
         super().__init__()
 
         # Static parts
@@ -205,15 +230,30 @@ class multiEqn(Env):
             eqn_dirn, level, generalization=generalization
         )
 
+        if self.generalization == 'poesia-full':
+            # Load templates from local file
+            TEMPLATE_PATH = "equation_templates/poesia/equations-ct.txt"
+            def fetch_templates():
+                with open(TEMPLATE_PATH, 'r') as f:
+                    templates = [line.strip() for line in f if line.strip() and not line.startswith('!')]
+                print(f"Loaded {len(templates)} templates from local file.")
+                return templates
+            self.templates = fetch_templates()  # Load templates once
+
         # Tracking how many times we've solved each eqn
         # Use a dict with keys = the actual sympy expression or string
         self.solve_counts = defaultdict(int)
         self.sample_counts = defaultdict(int)
 
         # Solution memories
-        self.mem = SolveMemory(capacity=1000)
-        self.traj = []
-        self.traj_readable = []   # human-readable    (lhs , rhs , op , term)
+        self.use_memory = use_memory
+        if self.use_memory:
+            if generalization == 'poesia-full':
+                self.mem = SolveMemory(capacity=10**7)
+            else:
+                self.mem = SolveMemory(capacity=10**4)
+            self.traj = []
+            self.traj_readable = []   # human-readable    (lhs , rhs , op , term)
 
         # Convert each eqn to a canonical string so we can store counts easily
         self.train_eqns_str = [str(eq) for eq in self.train_eqns]
@@ -221,8 +261,11 @@ class multiEqn(Env):
 
 
         # Random initial eqn
-        eqn_str = np.random.choice(self.train_eqns_str)
-        self.main_eqn = sympify(eqn_str)
+        if generalization == 'poesia-full':
+            self.main_eqn = self.sample_poesia_equation()
+        else:
+            eqn_str = np.random.choice(self.train_eqns_str)
+            self.main_eqn = sympify(eqn_str)
         self.lhs = self.main_eqn
         self.rhs = 0
         self.x = symbols('x')
@@ -319,30 +362,42 @@ class multiEqn(Env):
         self.actions, self.action_mask = action_list, action_mask
 
         # ── memory-guided imitation ------------------------------------------------
-        mem_tuple, sim = self.mem.query(obs_old.flatten()[None, :])      # ← (op, term) or None
-        if mem_tuple is not None:
-            try:
-                idx_in_current = action_list.index(mem_tuple)
-                if np.random.rand() < sim:
-                    # print(
-                    #     f"Overrode action: {lhs_old} = {rhs_old} | "
-                    #     f"{fmt_action(action_list[action_index])}  ==>  {fmt_action(mem_tuple)}"
-                    # )
-                    action_index = idx_in_current
-            except ValueError:
-                pass
+        # first check for exact match
+        if self.use_memory:
+            eqn_curr = f'{lhs_old} = {rhs_old}'
+            if eqn_curr in self.mem.memory_readable:
+                operation, term = self.mem.memory_readable[eqn_curr]  #update action index here
+                action_index = action_list.index((operation, term))  # Find index in current list
+            else:
+                operation, term = action_list[action_index]
+                mem_tuple, sim = self.mem.query(obs_old.flatten()[None, :])    
+                if mem_tuple is not None:
+                    try:
+                        idx_in_current = action_list.index(mem_tuple)
+                        if np.random.rand() < sim:
+                            # print(
+                            #     f"Overrode action: {lhs_old} = {rhs_old} | "
+                            #     f"{fmt_action(action_list[action_index])}  ==>  {fmt_action(mem_tuple)}"
+                            # )
+                            action_index = idx_in_current
+                            operation, term = action_list[action_index]
+                    except ValueError:
+                        pass
+        else:
+            operation, term = action_list[action_index]
+
 
         # ── apply chosen action ----------------------------------------------------
-        operation, term = action_list[action_index]
         lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
         obs_new, _ = self.to_vec(lhs_new, rhs_new)
 
         # ── record transition for potential memory storage ------------------------
         # (skip no-op to keep the buffer useful – optional but recommended)
-        if _is_effective(lhs_old, rhs_old, lhs_new, rhs_new):
+        if _is_effective(lhs_old, rhs_old, lhs_new, rhs_new) and self.use_memory:
             self.traj.append((obs_old.copy(), (operation, term)))  # CHANGED: store *tuple*, not index
-            self.traj_readable.append((lhs_old, rhs_old, operation, term))
-
+            key = f'{lhs_old} = {rhs_old}'
+            #self.traj_readable.append((f'{lhs_old} = {rhs_old}', operation_names[operation], term))
+            self.traj_readable.append((f'{lhs_old} = {rhs_old}', operation, term))
 
         # ── environment bookkeeping ------------------------------------------------
         is_valid_eqn, lhs_new, rhs_new = check_valid_eqn(lhs_new, rhs_new)
@@ -358,15 +413,25 @@ class multiEqn(Env):
         if is_solved:
             eqn_str = str(self.main_eqn)
             self.solve_counts[eqn_str] += 1
-            self.mem.add_episode(self.traj)       # CHANGED: episode stores tuples
-            #print("Episode stored in memory:\n" + fmt_traj(self.traj_readable))
-            #breakpoint()
-            self.traj.clear()
-            self.traj_readable.clear()
 
-        if terminated or truncated:
-            self.traj.clear()                     # reset trajectory buffer
-            self.traj_readable.append((lhs_old, rhs_old, operation, term))
+            # Add to memory
+            if self.use_memory and self.traj_readable:
+                key_first= self.traj_readable[0][0]  # eg. ax*b+= 0
+                if key_first not in self.mem.memory_readable:
+                    self.mem.add_episode(self.traj)
+                    for key, val1, val2 in self.traj_readable:
+                        self.mem.memory_readable[key] = (val1,val2)
+                    print("Episode stored in memory:")
+                    for idx, (eqn, op, term) in enumerate(self.traj_readable):
+                        op_name = getattr(op, '__name__', str(op))
+                        print(f"  Step {idx+1}: {eqn} | {op_name}, {term}")
+                self.traj.clear()
+                self.traj_readable.clear()
+
+        if self.use_memory:
+            if terminated or truncated:
+                self.traj.clear()                     # reset trajectory buffer
+                self.traj_readable.clear()
 
         # update state
         self.lhs, self.rhs, self.state = lhs_new, rhs_new, obs_new
@@ -378,6 +443,7 @@ class multiEqn(Env):
             "too_many_steps": too_many_steps,
             "lhs":            self.lhs,
             "rhs":            self.rhs,
+            "action_taken":   f'{operation_names[operation]} {term}',
             "main_eqn":       self.main_eqn,
             "action_mask":    self.action_mask,
         }
@@ -389,39 +455,66 @@ class multiEqn(Env):
         return obs_new, reward, terminated, truncated, info
 
 
+    def sample_poesia_equation(self, *, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+
+        template = np.random.choice(self.templates)          # raw line
+        placeholders = set(re.findall(r'-?\d+', template))   # e.g. "-2", "5"
+
+        eq_str = template
+        for ph in placeholders:
+            rnd = np.random.randint(-10, 11)                # may be 0
+            eq_str = eq_str.replace(ph, _int_to_symbol(rnd))
+
+        # convert "ax" → "a*x", "bx" → "b*x",  "0x" is impossible now
+        eq_str = re.sub(r'([A-Za-z])x\b', r'\1*x', eq_str)
+
+        # "lhs = rhs"  →  "lhs - (rhs)"
+        if '=' in eq_str:
+            lhs, rhs = map(str.strip, eq_str.split('=', 1))
+            eq_str = f'{lhs} - ({rhs})'
+
+        return sympify(eq_str)
+
 
     def reset(self, seed=None, options=None):
 
-        # Sample eqn in a 'curriculum' fashion:
-        # pick eqn with probability ~ 1/(1+solve_counts)
-        eqn_probs = []
-        if options == None:
-            for eqn_str in self.train_eqns_str:
-                eqn_probs.append( 1.0 / (1 + self.solve_counts[eqn_str]) )
-            eqn_probs = np.array(eqn_probs, dtype=np.float64)
-            eqn_probs /= eqn_probs.sum()
-            chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
-            self.main_eqn = sympify(chosen_eqn_str)
-            self.sample_counts[chosen_eqn_str] += 1
-        elif options == 'train':
-            chosen_eqn_str = np.random.choice(self.train_eqns_str)
-            self.main_eqn = sympify(chosen_eqn_str)
-        elif options == 'test':
-            chosen_eqn_str = np.random.choice(self.test_eqns_str)
-            self.main_eqn = sympify(chosen_eqn_str)
+        # Need to randomly sample each time
+        if self.generalization == 'poesia-full':
+            self.main_eqn = self.sample_poesia_equation()
+
+        else:
+            # Sample eqn in a 'curriculum' fashion:
+            # pick eqn with probability ~ 1/(1+solve_counts)
+            eqn_probs = []
+            if options == None:
+                for eqn_str in self.train_eqns_str:
+                    eqn_probs.append( 1.0 / (1 + self.solve_counts[eqn_str]) )
+                eqn_probs = np.array(eqn_probs, dtype=np.float64)
+                eqn_probs /= eqn_probs.sum()
+                chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
+                self.main_eqn = sympify(chosen_eqn_str)
+                self.sample_counts[chosen_eqn_str] += 1
+            elif options == 'train':
+                chosen_eqn_str = np.random.choice(self.train_eqns_str)
+                self.main_eqn = sympify(chosen_eqn_str)
+            elif options == 'test':
+                chosen_eqn_str = np.random.choice(self.test_eqns_str)
+                self.main_eqn = sympify(chosen_eqn_str)
 
         self.current_steps = 0
         self.lhs, self.rhs = self.main_eqn, 0
         obs, _ = self.to_vec(self.lhs, self.rhs)
         self.state = obs
-        self.traj.clear()
-        self.traj_readable.clear()
+        if self.use_memory:
+            self.traj.clear()
+            self.traj_readable.clear()
 
         # Recompute actions, masks, etc.
         self.setup()
 
         return obs, {}
-
 
 
     def to_vec(self, lhs, rhs):
