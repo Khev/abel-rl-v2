@@ -10,11 +10,12 @@
 import os, random, argparse, time, copy, numpy as np
 from pathlib import Path
 
+
 # ╭────────────────────────────────────────────────────────────────╮
 # │ 0)  third-party deps                                          │
 # ╰────────────────────────────────────────────────────────────────╯
 import torch, torch.nn as nn, torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATConv, global_mean_pool           # ⚠️  PyG
+from torch_geometric.nn import GCNConv, global_mean_pool           # ⚠️  PyG
 import gymnasium as gym
 
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -221,49 +222,6 @@ class GCNExtractor(BaseFeaturesExtractor):
         x = global_mean_pool(x, batch)
         return self.lin(x)
 
-
-class GATExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space, features_dim=128,
-                 hidden=64, heads=4, dropout=0.1):
-        super().__init__(observation_space, features_dim)
-        in_channels = observation_space["node_features"].shape[-1]
-
-        # concat=False -> head outputs averaged (output dim = out_channels)
-        self.gat1 = GATConv(in_channels, hidden, heads=heads, concat=False, dropout=dropout)
-        self.gat2 = GATConv(hidden, hidden,  heads=heads, concat=False, dropout=dropout)
-        self.lin  = nn.Linear(hidden, features_dim)
-
-    def forward(self, obs):
-        x_b     = obs["node_features"].float()
-        ei_b    = obs["edge_index"].long()
-        nmask_b = obs["node_mask"].bool()
-        emask_b = obs["edge_mask"].bool()
-
-        xs, edge_index, batch = [], [], []
-        node_off = 0
-        B = x_b.shape[0]
-
-        for i in range(B):
-            valid_nodes = nmask_b[i]
-            valid_edges = emask_b[i]
-            x_i  = x_b[i][valid_nodes]
-            ei_i = ei_b[i][:, valid_edges]
-            keep = valid_nodes[ei_i[0]] & valid_nodes[ei_i[1]]
-            ei_i = ei_i[:, keep] + node_off
-
-            xs.append(x_i)
-            edge_index.append(ei_i)
-            batch.append(torch.full((x_i.size(0),), i, dtype=torch.long, device=x_i.device))
-            node_off += x_i.size(0)
-
-        x  = torch.cat(xs, dim=0)
-        ei = torch.cat(edge_index, dim=1)
-        b  = torch.cat(batch, dim=0)
-
-        x = F.elu(self.gat1(x, ei))
-        x = F.elu(self.gat2(x, ei))
-        x = global_mean_pool(x, b)
-        return self.lin(x)
 
 
 class GNNPolicy(MaskableActorCriticPolicy):
