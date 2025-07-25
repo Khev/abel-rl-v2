@@ -13,6 +13,8 @@ from datetime import datetime
 from tqdm import tqdm
 from typing import Optional, Iterable, Dict, Any
 from collections import defaultdict
+import torch as th
+from rllte.xplore.reward import ICM
 
 # ============ third-party deps ============
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -27,9 +29,78 @@ from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.callbacks import BaseCallback
 
+from stable_baselines3.common.base_class import BaseAlgorithm
+from stable_baselines3.common.callbacks import CallbackList
+
 # ============ env ============
 from envs.single_eqn import singleEqn  # adjust path if needed
 from envs.multi_eqn_curriculum import multiEqn
+
+
+class IntrinsicReward(BaseCallback):
+    """
+    A more efficient callback for logging intrinsic rewards in RL training.
+    """
+
+    def __init__(self, irs, verbose=0, log_interval=100):
+        super(IntrinsicReward, self).__init__(verbose)
+        self.irs = irs
+        self.buffer = None
+        self.rewards_internal = []  # Store intrinsic rewards for logging
+        self.log_interval = log_interval
+        self.last_computed_intrinsic_rewards = None  # Store for logging
+
+    def init_callback(self, model: BaseAlgorithm) -> None:
+        super().init_callback(model)
+        self.buffer = self.model.rollout_buffer
+
+    def _on_step(self) -> bool:
+        """
+        Instead of computing at each step, log previously computed intrinsic rewards.
+        """
+        if self.last_computed_intrinsic_rewards is not None:
+            # Get last intrinsic reward from the rollout buffer
+            intrinsic_reward = self.last_computed_intrinsic_rewards[-1]
+            self.rewards_internal.append(intrinsic_reward)
+
+        # ✅ Print intrinsic reward stats every `log_interval` steps
+        # if self.n_calls % self.log_interval == 0 and self.rewards_internal:
+        #     mean_intrinsic = np.mean(self.rewards_internal[-self.log_interval:])
+        #     min_intrinsic = np.min(self.rewards_internal[-self.log_interval:])
+        #     max_intrinsic = np.max(self.rewards_internal[-self.log_interval:])
+        #     main_eqn = self.locals["infos"][0]['main_eqn']
+        #     #print(f"{main_eqn}: Step {self.num_timesteps}: "
+        #     #      f"(min, mean, max)_reward_internal = ({min_intrinsic:.3f}, {mean_intrinsic:.3f}, {max_intrinsic:.3f})\n")
+
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """
+        Efficiently compute intrinsic rewards once per rollout and store them.
+        """
+        obs = th.as_tensor(self.buffer.observations).float()
+        new_obs = obs.clone()
+        new_obs[:-1] = obs[1:]
+        new_obs[-1] = th.as_tensor(self.locals["new_obs"]).float()
+        actions = th.as_tensor(self.buffer.actions)
+        rewards = th.as_tensor(self.buffer.rewards)
+        dones = th.as_tensor(self.buffer.episode_starts)
+
+        # ✅ Compute **intrinsic rewards for the entire rollout** at once
+        intrinsic_rewards = self.irs.compute(
+            samples=dict(observations=obs, actions=actions,
+                         rewards=rewards, terminateds=dones,
+                         truncateds=dones, next_observations=new_obs),
+            sync=True
+        ).cpu().numpy()
+
+        # ✅ Store them so `_on_step()` can access them
+        self.last_computed_intrinsic_rewards = intrinsic_rewards
+
+        # ✅ Add intrinsic rewards to the rollout buffer
+        self.buffer.advantages += intrinsic_rewards
+        self.buffer.returns += intrinsic_rewards
+
 
 # ────────────────────────────────────────────────────────────────
 # Curve saving helper
@@ -586,7 +657,7 @@ def run_training(algo: str, eqn: str, env_type: str,
     env = DummyVecEnv([make_env])
 
     # policy + kwargs ---------------------------------------------
-    if   algo == "ppo":
+    if  algo in ["ppo",'ppo-icm']:
         pol, pkw = "MlpPolicy", dict(net_arch=hidden_list)  # <<< CHG
     elif algo == "ppo-gcn":
         pol, pkw = make_policy("gcn",  hidden_list), {}
@@ -607,7 +678,7 @@ def run_training(algo: str, eqn: str, env_type: str,
     )
 
     eval_freq = max(steps // 10, 1000)
-    eval_freq = min(eval_freq, steps)
+    eval_freq = 10**5
 
     if env_type == "single":
         cb = SolveLogger(freq=eval_freq)  # NOTE: assumes you defined SolveLogger elsewhere
@@ -621,6 +692,12 @@ def run_training(algo: str, eqn: str, env_type: str,
             algo_name = algo
         )
 
+        if algo == 'ppo-icm':
+            irs = ICM(env, device=device)
+            callback_intrinsic_reward = IntrinsicReward(irs)
+            cb = [cb, callback_intrinsic_reward]
+
+
     try:
         model.learn(total_timesteps=steps, callback=cb)
     except Exception:
@@ -633,13 +710,15 @@ def run_training(algo: str, eqn: str, env_type: str,
     if env_type == "single":
         return {"Tsolve": cb.T}
     else:
-        cov_last = cb.curve[-1][1] if cb.curve else None
+        # Handle cb as list or single
+        main_cb = cb[0] if isinstance(cb, list) else cb
+        cov_last = main_cb.curve[-1][1] if main_cb.curve else None
         return {
-            "Tsolve": cb.T,
-            "train_acc": getattr(cb, "last_train_acc", None),
-            "test_acc": getattr(cb, "last_test_acc", None),
+            "Tsolve": main_cb.T,
+            "train_acc": getattr(main_cb, "last_train_acc", None),
+            "test_acc": getattr(main_cb, "last_test_acc", None),
             "coverage": cov_last,
-            "curve": list(getattr(cb, "curve", []))
+            "curve": list(getattr(main_cb, "curve", []))
         }
 
 def worker(job):
@@ -680,7 +759,8 @@ def save_partial(results, out_dir: Path, algos, eqns, env_type: str):
 #  Sweep
 # ────────────────────────────────────────────────────────────────
 def sweep(args):
-    ALGOS = ["ppo", "ppo-gcn", "ppo-gat", "ppo-gin", "ppo-sage"]  # restore full list
+    ALGOS = ["ppo", "ppo-gcn", "ppo-gat", "ppo-gin", "ppo-sage"][:1]
+    ALGOS = ['ppo', 'ppo-icm']
     ALL_EQNS = [
         "a*x", "x+b", "a*x+b", "a/x+b",
         "c*(a*x+b)+d", "d/(a*x+b)+c",
@@ -780,9 +860,9 @@ def sweep(args):
 if __name__ == "__main__":
     pa = argparse.ArgumentParser()
     pa.add_argument('--env_type', type=str, choices=['single','multi'], default='multi')
-    pa.add_argument('--gen', type=str, default='poesia-tiny', help="generalization tag (multi mode)")
-    pa.add_argument('--trials', type=int, default=3, help="trials per algo/eqn (single) or per algo (multi)")
-    pa.add_argument("--timesteps", type=int, default=10**4)
+    pa.add_argument('--gen', type=str, default='poesia-small', help="generalization tag (multi mode)")
+    pa.add_argument('--trials', type=int, default=4, help="trials per algo/eqn (single) or per algo (multi)")
+    pa.add_argument("--timesteps", type=int, default=3*10**6)
     pa.add_argument("--seed", type=int, default=0)
     pa.add_argument("--save-dir", type=str, default="data/gnn_poesia_small/")
     pa.add_argument("--num-workers", type=int, default=8,
@@ -794,7 +874,7 @@ if __name__ == "__main__":
                     help="Number of hidden layers for MLP/GNN feature extractor")
     pa.add_argument("--n_hidden_dim", type=int, default=512,
                     help="Hidden dim size for each hidden layer in MLP/GNN")
-    pa.add_argument("--ent_coeff", type=float, default=0.02,
+    pa.add_argument("--ent_coeff", type=float, default=0.05,
                     help="Entropy coefficient for PPO")
 
     args = pa.parse_args()
