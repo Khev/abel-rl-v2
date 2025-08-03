@@ -25,7 +25,7 @@ class singleEqn(Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, main_eqn='a*x+b', state_rep='integer_1d', normalize_rewards=True, verbose=False, \
+    def __init__(self, main_eqn='c*(a*x+b)+d', state_rep='integer_1d', normalize_rewards=True, verbose=False, \
          cache=False) -> None:
         super().__init__()
 
@@ -151,6 +151,7 @@ class singleEqn(Env):
             'too_many_steps': too_many_steps,
             'lhs': self.lhs,
             'rhs': self.rhs,
+            'action': (operation_names[operation],term),
             'main_eqn': self.main_eqn,
             'action_mask': self.action_mask
         }

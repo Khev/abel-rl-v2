@@ -4,7 +4,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import logging
 import numpy as np
-from sympy import sympify
+from sympy import sympify, symbols, sin, cos, tan, atan, asin, exp, log
 import re
 from sympy import sympify, symbols
 from gymnasium import spaces, Env
@@ -13,6 +13,7 @@ from operator import add, sub, mul, truediv
 from utils.utils_env import *
 from collections import defaultdict, deque
 import faiss                    # pip install faiss-cpu
+
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ class multiEqn(Env):
                  level=4, 
                  generalization='structural',
                  use_memory=False,
-                 use_curriculum=False
+                 use_curriculum=True
                  ) -> None:
         super().__init__()
 
@@ -336,7 +337,14 @@ class multiEqn(Env):
             (custom_square, None),
             (custom_sqrt, None),
             (mul, -1),
+            (custom_exp, None),
+            (custom_log, None),
+            (custom_sin, None),
+            (custom_cos, None),
+            (inverse_sin, None),
+            (inverse_cos, None)
         ]
+
 
         if self.cache:
             self.actions, self.action_mask = make_actions_cache(
@@ -391,9 +399,75 @@ class multiEqn(Env):
             operation, term = action_list[action_index]
 
 
+        try:
+            with time_limit(0.05):  # 50ms budget per algebra op
+                lhs_new = operation(lhs_old, term)
+                rhs_new = operation(rhs_old, term)
+                obs_new, _ = self.to_vec(lhs_new, rhs_new)
+        except Exception as e:
+            # Treat as invalid action; keep state, penalize, and (recommended) end episode quickly
+            reward = self.reward_invalid_equation
+            if self.normalize_rewards:
+                # rescale reward to [-1, 1] given min=-100, max=+100 by your design
+                min_r, max_r = self.reward_invalid_equation, self.reward_solved
+                reward = 2.0 * (reward - min_r) / float(max_r - min_r) - 1.0
+
+            self.current_steps += 1
+
+            info = {
+                "is_solved":      False,
+                "is_valid_eqn":   False,
+                "too_many_steps": (self.current_steps >= self.max_steps),
+                "lhs":            self.lhs,                # state unchanged
+                "rhs":            self.rhs,
+                "action_taken":   f"{operation_names.get(operation, getattr(operation, '__name__', str(operation)))} {term}",
+                "main_eqn":       self.main_eqn,
+                "action_mask":    self.action_mask,
+                "error":          f"{type(e).__name__}: {e}",
+            }
+
+            # Recommended: terminate to avoid long stalls on bad branches
+            terminated = True
+            truncated  = False
+            return self.state, reward, terminated, truncated, info
+
+
+        try:
+            with time_limit(0.05):  # 50ms budget per algebra op
+                lhs_new = operation(lhs_old, term)
+                rhs_new = operation(rhs_old, term)
+                obs_new, _ = self.to_vec(lhs_new, rhs_new)
+        except SympyTimeout:
+            # Treat as invalid action; keep state, penalize, and (recommended) end episode quickly
+            reward = self.reward_invalid_equation
+            if self.normalize_rewards:
+                # rescale reward to [-1, 1] given min=-100, max=+100 by your design
+                min_r, max_r = self.reward_invalid_equation, self.reward_solved
+                reward = 2.0 * (reward - min_r) / float(max_r - min_r) - 1.0
+
+            self.current_steps += 1
+
+            info = {
+                "is_solved":      False,
+                "is_valid_eqn":   False,
+                "too_many_steps": (self.current_steps >= self.max_steps),
+                "lhs":            self.lhs,                # state unchanged
+                "rhs":            self.rhs,
+                "action_taken":   f"{operation_names.get(operation, getattr(operation, '__name__', str(operation)))} {term}",
+                "main_eqn":       self.main_eqn,
+                "action_mask":    self.action_mask,
+                "error":          f"timeout",
+            }
+
+            # Recommended: terminate to avoid long stalls on bad branches
+            terminated = True
+            truncated  = False
+            return self.state, reward, terminated, truncated, info
+
+
         # ── apply chosen action ----------------------------------------------------
-        lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
-        obs_new, _ = self.to_vec(lhs_new, rhs_new)
+        # lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
+        # obs_new, _ = self.to_vec(lhs_new, rhs_new)
 
         # ── record transition for potential memory storage ------------------------
         # (skip no-op to keep the buffer useful – optional but recommended)
@@ -575,4 +649,54 @@ class multiEqn(Env):
         self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
         obs, _ = self.to_vec(self.lhs, self.rhs)
         self.state = obs
+
+
+
+# ────────────────────────────────────────────────────────────────
+# quick smoke test: set equation a*sin(x) + b = 0 and step
+# ────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    from sympy import sympify
+
+    # Instantiate the env (no wrappers for this quick test)
+    env = multiEqn(
+        generalization="abel-small",
+        state_rep="integer_1d",
+        normalize_rewards=True,
+        use_curriculum=False,
+        verbose=True,          # print each step's operation
+    )
+
+    # Standard reset to initialize internal structures
+    obs, info = env.reset(seed=0)
+
+    # Set the specific equation LHS and recompute actions/masks
+    target_eq = sympify("exp(x) + b")
+    env.set_equation(target_eq)
+    env.setup()   # IMPORTANT: refresh actions/masks for the new equation
+
+    print("\n--- TEST: a*sin(x) + b = 0 ---")
+    print(f"Initial LHS: {env.lhs} ; RHS: {env.rhs}")
+    print(f"Observation shape: {np.shape(obs)}")
+
+    # Take a few random VALID actions
+    max_steps = 3
+    actions 
+    for t in range(max_steps):
+        # choose a valid action index via the mask
+        mask = env.get_valid_action_mask()
+        valid_idxs = np.flatnonzero(mask) if mask is not None else np.arange(env.action_dim)
+        action = int(np.random.choice(valid_idxs)) if len(valid_idxs) > 0 else 0
+
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        print(f"[t={t:02d}] reward={reward:+.3f} | "
+              f"taken={info.get('action_taken')} | ",
+              f"is_solved={info.get('is_solved')}")
+
+        if terminated or truncated:
+            break
+
+    print("\nFinal state:")
+    env.render()
 

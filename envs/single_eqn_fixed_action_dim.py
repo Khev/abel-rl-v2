@@ -8,6 +8,8 @@ import numpy as np
 from sympy import sympify
 from gymnasium import spaces, Env
 from utils.custom_functions import *
+from operator import add, sub, mul, truediv
+from sympy import symbols
 
 #from sympy import symbols, simplify, factor, sqrt, Pow, Basic, Integer, Mul, Add, preorder_traversal, Poly
 
@@ -20,19 +22,19 @@ from utils.utils_env import *
 
 logger = logging.getLogger(__name__)
 
-class multiEqn(Env):
+class singleEqnFixedAction(Env):
     """Environment for solving linear equations using RL."""
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, state_rep='integer_1d', normalize_rewards=True, verbose=False, \
-         cache=False, level=7, generalization='random') -> None:
+    def __init__(self, main_eqn='a*x+b', state_rep='integer_1d', normalize_rewards=True, verbose=False, \
+         cache=False) -> None:
         super().__init__()
 
         # Static parts
         self.max_expr_length = 20
-        self.max_steps = 10
-        self.action_dim = 50
+        self.max_steps = 5
+        self.action_dim = 12
         self.observation_dim = 2*self.max_expr_length+1
 
         # Rewards
@@ -49,24 +51,9 @@ class multiEqn(Env):
         self.normalize_rewards = normalize_rewards
         self.state_rep = state_rep
         self.verbose = verbose
-
-        # Set train/test equations
-        self.level = level
-        self.generalization = generalization
-        eqn_dirn = f"equation_templates"
-        self.train_eqns, self.test_eqns = load_train_test_equations(eqn_dirn, level, generalization=generalization)
-
-        # self.train_eqns = self.train_eqns[:2]
-        # self.test_eqns = self.test_eqns[:2]
-
-        # self.train_eqns = ['a*x', 'x+b', 'a*x+b', 'a/x+b', 'c*(a*x+b)+d', 'sqrt(a*x+b)+c', '(a*x**2+b)**2+c', 'd/(a*x+b)+c',
-        #                     'e*(a*x+b)+(c*x+d)', '(a*x+b)/(c*x+d)+e']
-        # self.test_eqns = []
-        # self.train_eqns = [sympify(e) for e in self.train_eqns]
-        # self.test_eqns = [sympify(e) for e in self.test_eqns]
         
         # Set main equation to solve
-        self.main_eqn = np.random.choice(self.train_eqns)
+        self.main_eqn = sympify(main_eqn)
         self.lhs = self.main_eqn
         self.rhs = 0
         self.x = symbols('x')
@@ -97,43 +84,22 @@ class multiEqn(Env):
     def setup(self):
         
         # Ex: {'add':-1,, ... x:1, a:2, ...}
-        self.feature_dict = make_feature_dict_multi(self.train_eqns, self.test_eqns, self.state_rep)
+        self.feature_dict = make_feature_dict(self.main_eqn, self.state_rep)
 
-        # Define fixed actions directly
-        self.actions_fixed = [
-            (custom_expand, None),
-            #(custom_simplify, None),
-            (custom_factor, None),
-            (custom_collect, self.x),     # only allow collecting at x
-            (custom_together, None),
-            (custom_ratsimp, None),
-            (custom_square, None),
-            (custom_sqrt, None),
-            (mul, -1)
-        ]
-
-        if self.cache:
-            self.actions, self.action_mask = make_actions_cache(self.lhs, self.rhs, self.actions_fixed, \
-                 self.action_dim, self.action_cache)
-        else:
-            self.actions, self.action_mask = make_actions(self.lhs, self.rhs, self.actions_fixed, self.action_dim)
-
+        a, b, x = symbols('a b x')
+        terms = [a, b, x]
+        operations = [add, sub, mul, truediv]
+        actions = [(op, term) for op in operations for term in terms]
+        self.actions = actions
+        #return actions
 
     def step(self, action_index):
 
         # Make actions: these are dynamic, so depend on current lhs, rhs
         lhs_old, rhs_old, obs_old = self.lhs, self.rhs, self.obs
-        if self.cache:
-            action_list, action_mask = make_actions_cache(lhs_old, rhs_old, self.actions_fixed, \
-                 self.action_dim, self.action_cache)
-        else:
-            action_list, action_mask = make_actions(lhs_old, rhs_old, self.actions_fixed, self.action_dim)
-
-        self.actions = action_list
-        self.action_mask = action_mask
 
         # Apply action
-        action = action_list[action_index]
+        action = self.actions[action_index]
         operation, term = action
         lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
         obs_new, complexity_obs_new = self.to_vec(lhs_new, rhs_new)
@@ -166,8 +132,7 @@ class multiEqn(Env):
             'too_many_steps': too_many_steps,
             'lhs': self.lhs,
             'rhs': self.rhs,
-            'main_eqn': self.main_eqn,
-            'action_mask': self.action_mask
+            'main_eqn': self.main_eqn
         }
 
         if self.verbose:
@@ -177,21 +142,17 @@ class multiEqn(Env):
         
         return obs_new, reward, terminated, truncated, info
 
-    def set_equation(self,main_eqn):
-        self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
-        
 
-    def reset(self, seed=0, options=None, main_eqn=None):
-        main_eqn = np.random.choice(self.train_eqns)
+    def reset(self, seed=0, options=None):
         self.current_steps = 0
-        self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
+        self.lhs, self.rhs = self.main_eqn, 0
         obs, _ = self.to_vec(self.lhs, self.rhs)
         self.obs = obs
         return obs, {}
 
 
     def render(self, mode: str = "human"):
-        print(f'{env.lhs} = {env.rhs}')
+        print(f'{self.lhs} = {self.rhs}')
 
 
     def to_vec(self, lhs, rhs):
@@ -226,8 +187,25 @@ class multiEqn(Env):
         return reward
 
 
-    def get_valid_action_mask(self):
-        return self.action_mask
+# Testing the updated Env class
+if __name__ == "__main__":
+    from stable_baselines3.common.env_checker import check_env
+
+    env = singleEqn()
+    #check_env(env)
+    state, _ = env.reset()
+    done = False
+    while not done:
+        action = env.action_space.sample()
+        op, term = env.actions[action]
+        next_state, reward, done, truncated, info = env.step(action)
+        print(f'{env.lhs} = {env.rhs}, {operation_names[op]}, {term}')
+        if done:
+            if info['is_solved'] == True:
+                print('solved!')
+            elif info['too_many_steps'] == True:
+                print('exceeded max length')
+
 
 
 

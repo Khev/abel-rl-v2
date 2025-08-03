@@ -165,10 +165,10 @@ class singleEqn(Env):
             'action_mask': self.action_mask
         }
 
-        if self.verbose:
-            print(f'{self.lhs} = {self.rhs}. (Operation,term): {operation_names[operation]}, {term}')
+        #if self.verbose:
+        #print(f'{self.lhs} = {self.rhs}. Action: {operation_names[operation]}, {term}, reward={reward}')
 
-        #print(f'{obs_new} \n')
+        #print(f'{obs_new} \n')s
         
         return obs_new, reward, terminated, truncated, info
 
