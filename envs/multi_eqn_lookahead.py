@@ -1,0 +1,838 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import logging
+import re
+import time                                   # ### NEW
+import hashlib
+
+import numpy as np
+import faiss                                  # pip install faiss-cpu
+from gymnasium import spaces, Env
+from operator import add, sub, mul, truediv
+from collections import defaultdict, deque
+
+from sympy import sympify, symbols, sin, cos, tan, atan, asin, exp, log
+
+from utils.custom_functions import *
+from utils.utils_env import *
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------
+# Helpers for generating randomized symbol names in poesia loader
+# ---------------------------------------------------------------------
+letter_map = {                   # 1→a, 2→b, …, 26→z
+    i: chr(ord('a') + i - 1) for i in range(1, 27)
+}
+
+def _int_to_symbol(n: int) -> str:
+    """
+    0   → 'k'
+    1   → 'a'
+    …   → …
+    -3  → '-c'
+    10  → 'j'
+    """
+    if n == 0:
+        return 'k'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    base = letter_map.get(n, f'c{n}')   # fallback name if |n|>26
+    return f'{sign}{base}'
+
+def _is_effective(lhs_old, rhs_old, lhs_new, rhs_new) -> bool:
+    """True ↔ (lhs,rhs) actually changed."""
+    return (lhs_old != lhs_new) or (rhs_old != rhs_new)
+
+def fmt_action(act):
+    """Readable string for an (operation, term) tuple."""
+    op, term = act
+    op_name = operation_names.get(op, op.__name__)
+    return f"({op_name}, {term})"
+
+def _fmt_step(lhs, rhs, op, term) -> str:
+    """`a*x = b  --add(c)-->`  (one step)."""
+    name = operation_names.get(op, op.__name__)
+    t    = "" if term is None else str(term)
+    return f"{lhs} = {rhs}  --{name}({t})-->"
+
+def fmt_traj(traj_readable) -> str:
+    """
+    Convert the *readable* trajectory list to a multi-line string.
+    Each item is (lhs, rhs, operation, term).
+    """
+    lines = []
+    for lhs, rhs, op, term in traj_readable:
+        lines.append(_fmt_step(lhs, rhs, op, term))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------
+# Episodic Success Memory (kNN over observations) — already present
+# ---------------------------------------------------------------------
+class SolveMemory:
+    """
+    Episodic nearest-neighbour memory used for imitation-style hints.
+
+    * Every **successful** episode supplies (obs, action) pairs.
+    * At query-time we return the action of the single L2-nearest state
+      together with a similarity score in (0, 1].
+
+    NEW bits vs. a trivial version:
+      1) De-duplication by hash (keeps index small).
+      2) FIFO capacity clamp.
+    """
+
+    def __init__(self, capacity: int = 50_000, k: int = 1, dedup: bool = True):
+        self.capacity  : int  = capacity         # max transitions kept
+        self.k         : int  = k                # # neighbours to retrieve
+        self.dedup     : bool = dedup            # skip exact duplicates
+        self.index     = None                    # FAISS index (built lazily)
+
+        self.obs_store: list[np.ndarray] = []    # flattened observations
+        self.act_store: list[int]        = []    # matching discrete actions (here: (op, term) tuples)
+        self._hash_set: set[str]         = set() # for de-duplication
+
+        self.memory_readable = {}
+
+    @staticmethod
+    def _vec_hash(vec: np.ndarray) -> str:
+        """MD5 hash of the raw bytes of a NumPy vector (fast & short)."""
+        return hashlib.md5(vec.tobytes()).hexdigest()
+
+    def add_episode(self, episode):
+        """
+        Parameters
+        ----------
+        episode : list
+            Sequence of `(obs, action, ...)` tuples from a *successful* run.
+            Only the first two fields are used.
+        """
+        for obs, act, *_ in episode:
+            flat = obs.flatten()
+            if self.dedup:
+                h = self._vec_hash(flat)
+                if h in self._hash_set:
+                    continue
+                self._hash_set.add(h)
+
+            self.obs_store.append(flat)
+            self.act_store.append(act)  # (operation, term)
+
+        overflow = len(self.obs_store) - self.capacity
+        if overflow > 0:
+            self.obs_store = self.obs_store[overflow:]
+            self.act_store = self.act_store[overflow:]
+            if self.dedup:
+                self._hash_set = { self._vec_hash(v) for v in self.obs_store }
+
+        self.index = None  # FAISS index stale
+
+    def _maybe_build(self):
+        if self.index is not None or not self.obs_store:
+            return
+        dim = self.obs_store[0].shape[0]
+        self.index = faiss.IndexFlatL2(dim)       # exact L2 search
+        self.index.add(np.stack(self.obs_store).astype(np.float32))
+
+    def query(self, obs_vec: np.ndarray):
+        """
+        Returns
+        -------
+        (action, similarity) :
+            * `action`  – (operation, term) tuple or **None** if memory empty
+            * `similarity` – mapped to (0, 1],   `1 / (1 + L2²)`
+        """
+        self._maybe_build()
+        if self.index is None:
+            return None, 0.0
+
+        q = obs_vec.astype(np.float32, copy=False).reshape(1, -1)
+        dists, idxs = self.index.search(q, self.k)
+        best_id   = int(idxs[0, 0])
+        best_dist = float(dists[0, 0])            # squared-L2
+        similarity = 1.0 / (1.0 + best_dist)      # (0, ∞) → (1, 0]
+
+        return self.act_store[best_id], similarity
+
+
+# ---------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------
+class multiEqn(Env):
+    """
+    Environment for solving multiple equations using RL, 
+    with a simple curriculum that samples equations inversely 
+    proportional to how often they've been solved.
+    """
+
+    metadata = {"render_modes": ["human"]}
+
+    def __init__(self, 
+                 state_rep='integer_1d', 
+                 normalize_rewards=True, 
+                 verbose=False,
+                 cache=False, 
+                 level=4, 
+                 generalization='structural',
+                 use_memory=False,
+                 use_curriculum=True,
+                 use_lookahead=False               # ### NEW
+                 ) -> None:
+        super().__init__()
+
+        # Static parts
+        self.max_expr_length = 20
+        self.max_steps = 10
+        self.action_dim = 50
+        self.observation_dim = 2*self.max_expr_length + 1
+
+        # Rewards
+        self.reward_solved = +100
+        self.reward_invalid_equation = -100
+        self.reward_illegal_action = -1
+
+        # Optimizing
+        self.cache = cache
+        if self.cache:
+            self.action_cache = {}
+
+        # Pars
+        self.normalize_rewards = normalize_rewards
+        self.state_rep = state_rep
+        self.verbose = verbose
+
+        # Load train/test equations
+        self.level = level
+        self.generalization = generalization
+        eqn_dirn = f"equation_templates"
+        self.train_eqns, self.test_eqns = load_train_test_equations(
+            eqn_dirn, level, generalization=generalization
+        )
+
+        print(f'{generalization}: {len(self.train_eqns)} train eqns, {len(self.test_eqns)} test eqns')
+
+        if self.generalization == 'poesia-full':
+            TEMPLATE_PATH = "equation_templates/poesia/equations-ct.txt"
+            def fetch_templates():
+                with open(TEMPLATE_PATH, 'r') as f:
+                    templates = [line.strip() for line in f if line.strip() and not line.startswith('!')]
+                print(f"Loaded {len(templates)} templates from local file.")
+                return templates
+            self.templates = fetch_templates()  # Load templates once
+
+        # Tracking how many times we've solved each eqn
+        self.solve_counts = defaultdict(int)
+        self.sample_counts = defaultdict(int)
+
+        # Solution memories
+        self.use_memory = use_memory
+        self.use_curriculum = use_curriculum
+        if self.use_memory:
+            if generalization == 'poesia-full':
+                self.mem = SolveMemory(capacity=10**7)
+            else:
+                self.mem = SolveMemory(capacity=10**4)
+            self.traj = []
+            self.traj_readable = []   # human-readable    (lhs , rhs , op , term)
+
+        # Convert each eqn to a canonical string so we can store counts easily
+        self.train_eqns_str = [str(eq) for eq in self.train_eqns]
+        self.test_eqns_str = [str(eq) for eq in self.test_eqns]
+
+        # Random initial eqn
+        if generalization == 'poesia-full':
+            self.main_eqn = self.sample_poesia_equation()
+        else:
+            eqn_str = np.random.choice(self.train_eqns_str)
+            self.main_eqn = sympify(eqn_str)
+        self.lhs = self.main_eqn
+        self.rhs = 0
+        self.x = symbols('x')
+
+        #  Make feature_dict, actions etc
+        self.setup()
+
+        # RL env setup
+        self.state = self.to_vec(self.lhs, self.rhs)
+        self.action_space = spaces.Discrete(self.action_dim)
+
+        if state_rep == 'integer_1d':
+            self.observation_space = spaces.Box(
+                low=-np.inf, high=np.inf, 
+                shape=(self.observation_dim,), 
+                dtype=np.float64
+            )
+        elif state_rep == 'integer_2d':
+            self.observation_space = spaces.Box(
+                low=-np.inf, high=np.inf, 
+                shape=(self.observation_dim, 2), 
+                dtype=np.float64
+            )
+        elif state_rep in ['graph_integer_1d', 'graph_integer_2d']:
+            self.observation_space = spaces.Dict({
+                "node_features": spaces.Box(
+                    low=-np.inf, high=np.inf, 
+                    shape=(self.observation_dim, 2), 
+                    dtype=np.float64
+                ),
+                "edge_index": spaces.Box(
+                    low=0, high=self.observation_dim, 
+                    shape=(2, 2*self.observation_dim), 
+                    dtype=np.int32
+                ),
+                "node_mask": spaces.Box(
+                    low=0, high=1, 
+                    shape=(self.observation_dim,), 
+                    dtype=np.int32
+                ),
+                "edge_mask": spaces.Box(
+                    low=0, high=1, 
+                    shape=(2*self.observation_dim,), 
+                    dtype=np.int32
+                ),
+            })
+        else:
+            raise ValueError(f"Unsupported state representation: {state_rep}")
+
+        # ### NEW: tiny lookahead toggle + config
+        self.use_lookahead = use_lookahead
+        self.planner_topk = 8
+        self.planner_beam = 3
+        self.planner_depth = 2
+        self.planner_expansion_budget = 128
+        self.planner_time_budget_ms = 3
+        self.planner_terminal_bonus = 100.0
+        self.planner_loop_penalty = 0.5
+        self._recent_hashes = deque(maxlen=64)   # tiny tabu list
+
+
+    def setup(self):
+        # Build feature dict from all train eqns
+        self.feature_dict = make_feature_dict_multi(
+            self.train_eqns, self.test_eqns, self.state_rep
+        )
+
+        # Define some fixed 'global' transformations
+        self.actions_fixed = [
+            (custom_expand, None),
+            (custom_factor, None),
+            (custom_collect, self.x),
+            (custom_together, None),
+            (custom_ratsimp, None),
+            (custom_square, None),
+            (custom_sqrt, None),
+            (mul, -1),
+            (custom_exp, None),
+            (custom_log, None),
+            (custom_sin, None),
+            (custom_cos, None),
+            (inverse_sin, None),
+            (inverse_cos, None)
+        ]
+
+        if self.cache:
+            self.actions, self.action_mask = make_actions_cache(
+                self.lhs, self.rhs, self.actions_fixed, 
+                self.action_dim, self.action_cache
+            )
+        else:
+            self.actions, self.action_mask = make_actions(
+                self.lhs, self.rhs, self.actions_fixed, self.action_dim
+            )
+
+
+    def step(self, action_index: int):
+        lhs_old, rhs_old, obs_old = self.lhs, self.rhs, self.state
+
+        # ── (re)build the current action list ────────────────────────────────────
+        if self.cache:
+            action_list, action_mask = make_actions_cache(
+                lhs_old, rhs_old, self.actions_fixed,
+                self.action_dim, self.action_cache
+            )
+        else:
+            action_list, action_mask = make_actions(
+                lhs_old, rhs_old, self.actions_fixed, self.action_dim
+            )
+
+        self.actions, self.action_mask = action_list, action_mask
+
+        # ── memory-guided imitation ------------------------------------------------
+        # first check for exact match
+        if self.use_memory:
+            eqn_curr = f'{lhs_old} = {rhs_old}'
+            if eqn_curr in self.mem.memory_readable:
+                operation, term = self.mem.memory_readable[eqn_curr]  # update action index here
+                try:
+                    action_index = action_list.index((operation, term))  # Find index in current list
+                except ValueError:
+                    pass
+            else:
+                operation, term = action_list[action_index]
+                mem_tuple, sim = self.mem.query(obs_old.flatten()[None, :])    
+                if mem_tuple is not None:
+                    try:
+                        idx_in_current = action_list.index(mem_tuple)
+                        if np.random.rand() < sim:
+                            action_index = idx_in_current
+                            operation, term = action_list[action_index]
+                    except ValueError:
+                        pass
+        else:
+            operation, term = action_list[action_index]
+
+        # ── tiny lookahead may override the chosen action -------------------------
+        if self.use_lookahead:
+            try:
+                planned_idx = self._plan_action_index()
+                # override only if legal
+                if 0 <= planned_idx < len(action_list) and (self.action_mask is None or self.action_mask[planned_idx]):
+                    action_index = planned_idx
+                    operation, term = action_list[action_index]
+            except Exception:
+                # if planner fails for any reason, fall back silently
+                pass
+
+        # ── attempt to apply chosen action (guarded) ------------------------------
+        try:
+            with time_limit(0.05):  # 50ms budget per algebra op
+                lhs_new = operation(lhs_old, term)
+                rhs_new = operation(rhs_old, term)
+                obs_new, _ = self.to_vec(lhs_new, rhs_new)
+        except Exception as e:
+            # Treat as invalid action; keep state, penalize, and (recommended) end episode quickly
+            reward = self.reward_invalid_equation
+            if self.normalize_rewards:
+                min_r, max_r = self.reward_invalid_equation, self.reward_solved
+                reward = 2.0 * (reward - min_r) / float(max_r - min_r) - 1.0
+
+            self.current_steps += 1
+
+            info = {
+                "is_solved":      False,
+                "is_valid_eqn":   False,
+                "too_many_steps": (self.current_steps >= self.max_steps),
+                "lhs":            self.lhs,                # state unchanged
+                "rhs":            self.rhs,
+                "action_taken":   f"{operation_names.get(operation, getattr(operation, '__name__', str(operation)))} {term}",
+                "main_eqn":       self.main_eqn,
+                "action_mask":    self.action_mask,
+                "error":          f"{type(e).__name__}: {e}",
+            }
+
+            # Recommended: terminate to avoid long stalls on bad branches
+            terminated = True
+            truncated  = False
+            return self.state, reward, terminated, truncated, info
+
+        try:
+            with time_limit(0.05):  # 50ms budget per algebra op
+                lhs_new = operation(lhs_old, term)
+                rhs_new = operation(rhs_old, term)
+                obs_new, _ = self.to_vec(lhs_new, rhs_new)
+        except SympyTimeout:
+            reward = self.reward_invalid_equation
+            if self.normalize_rewards:
+                min_r, max_r = self.reward_invalid_equation, self.reward_solved
+                reward = 2.0 * (reward - min_r) / float(max_r - min_r) - 1.0
+
+            self.current_steps += 1
+
+            info = {
+                "is_solved":      False,
+                "is_valid_eqn":   False,
+                "too_many_steps": (self.current_steps >= self.max_steps),
+                "lhs":            self.lhs,
+                "rhs":            self.rhs,
+                "action_taken":   f"{operation_names.get(operation, getattr(operation, '__name__', str(operation)))} {term}",
+                "main_eqn":       self.main_eqn,
+                "action_mask":    self.action_mask,
+                "error":          f"timeout",
+            }
+
+            terminated = True
+            truncated  = False
+            return self.state, reward, terminated, truncated, info
+
+        # ── record transition for potential memory storage ------------------------
+        if _is_effective(lhs_old, rhs_old, lhs_new, rhs_new) and self.use_memory:
+            self.traj.append((obs_old.copy(), (operation, term)))  # store tuple, not index
+            key = f'{lhs_old} = {rhs_old}'
+            self.traj_readable.append((f'{lhs_old} = {rhs_old}', operation, term))
+
+        # ── environment bookkeeping ------------------------------------------------
+        is_valid_eqn, lhs_new, rhs_new = check_valid_eqn(lhs_new, rhs_new)
+        is_solved = check_eqn_solved(lhs_new, rhs_new, self.main_eqn)
+
+        reward = self.find_reward(lhs_old, rhs_old, lhs_new, rhs_new,
+                                  is_valid_eqn, is_solved)
+
+        too_many_steps = (self.current_steps >= self.max_steps)
+        terminated = bool(is_solved or too_many_steps or not is_valid_eqn)
+        truncated = False
+
+        if is_solved:
+            eqn_str = str(self.main_eqn)
+            self.solve_counts[eqn_str] += 1
+
+            # Add to memory
+            if self.use_memory and self.traj_readable:
+                key_first= self.traj_readable[0][0]
+                if key_first not in self.mem.memory_readable:
+                    self.mem.add_episode(self.traj)
+                    for key, val1, val2 in self.traj_readable:
+                        self.mem.memory_readable[key] = (val1, val2)
+                self.traj.clear()
+                self.traj_readable.clear()
+
+        if self.use_memory:
+            if terminated or truncated:
+                self.traj.clear()
+                self.traj_readable.clear()
+
+        # update state
+        self.lhs, self.rhs, self.state = lhs_new, rhs_new, obs_new
+        self.current_steps += 1
+
+        info = {
+            "is_solved":      is_solved,
+            "is_valid_eqn":   is_valid_eqn,
+            "too_many_steps": too_many_steps,
+            "lhs":            self.lhs,
+            "rhs":            self.rhs,
+            "action_taken":   f'{operation_names[operation]} {term}',
+            "main_eqn":       self.main_eqn,
+            "action_mask":    self.action_mask,
+        }
+
+        if self.verbose:
+            print(f"{self.lhs} = {self.rhs}. "
+                  f"(Operation, term): ({operation_names[operation]}, {term})")
+
+        return obs_new, reward, terminated, truncated, info
+
+    # ----------------------- Tiny Lookahead utilities (NEW) -----------------------
+    def snapshot(self):
+        """Deep copy of everything the planner can mutate."""
+        return {
+            "lhs": self.lhs,
+            "rhs": self.rhs,
+            "current_steps": self.current_steps,
+        }
+
+    def restore(self, snap):
+        self.lhs = snap["lhs"]
+        self.rhs = snap["rhs"]
+        self.current_steps = snap["current_steps"]
+
+    def state_hash(self, lhs=None, rhs=None):
+        from sympy import srepr
+        lhs = self.lhs if lhs is None else lhs
+        rhs = self.rhs if rhs is None else rhs
+        return (srepr(lhs), srepr(rhs))
+
+    def state_complexity(self, lhs=None, rhs=None):
+        lhs = self.lhs if lhs is None else lhs
+        rhs = self.rhs if rhs is None else rhs
+        return get_complexity_expression(lhs) + get_complexity_expression(rhs)
+
+    def _actions_and_mask(self, lhs, rhs):
+        if self.cache:
+            return make_actions_cache(lhs, rhs, self.actions_fixed, self.action_dim, self.action_cache)
+        else:
+            return make_actions(lhs, rhs, self.actions_fixed, self.action_dim)
+
+    def _plan_action_index(self):
+        """
+        Returns the chosen action index using a very small lookahead:
+          - depth=2 (configurable)
+          - beam and top-k pruning (configurable)
+          - score = sum Δcomplexity + terminal_bonus - loop_penalty
+        Uses only heuristics (no policy/critic required).
+        """
+        start_t = time.time()
+        expansions = 0
+
+        # Build root candidate list
+        root_lhs, root_rhs = self.lhs, self.rhs
+        root_actions, root_mask = self._actions_and_mask(root_lhs, root_rhs)
+        legal_idxs = np.flatnonzero(root_mask) if root_mask is not None else np.arange(self.action_dim)
+        if len(legal_idxs) == 0:
+            return 0  # fallback
+
+        root_snap = self.snapshot()
+        C0 = self.state_complexity(root_lhs, root_rhs)
+        root_hash = self.state_hash(root_lhs, root_rhs)
+
+        # Score one-step candidates and keep top-k
+        candidates = []
+        for a in legal_idxs:
+            op, term = root_actions[a]
+            try:
+                lhs1 = op(root_lhs, term); rhs1 = op(root_rhs, term)
+                # validate and normalize
+                is_valid, lhs1, rhs1 = check_valid_eqn(lhs1, rhs1)
+                if not is_valid:
+                    continue
+                C1 = self.state_complexity(lhs1, rhs1)
+                dC = (C0 - C1)
+                solved = check_eqn_solved(lhs1, rhs1, self.main_eqn)
+                leaf_score = dC + (self.planner_terminal_bonus if solved else 0.0)
+                # loop penalty
+                if self.state_hash(lhs1, rhs1) in self._recent_hashes:
+                    leaf_score -= self.planner_loop_penalty
+                # store
+                candidates.append((leaf_score, a, lhs1, rhs1, solved))
+            except Exception:
+                # illegal/timeout-like; skip
+                continue
+
+            expansions += 1
+            if expansions >= self.planner_expansion_budget:
+                break
+
+        if not candidates:
+            # nothing valid simulated → pick any legal
+            return int(legal_idxs[0])
+
+        # keep top-k by score
+        candidates.sort(key=lambda x: -x[0])
+        candidates = candidates[:self.planner_topk]
+
+        # depth==1 → choose best root action now
+        if self.planner_depth <= 1:
+            best = candidates[0]
+            return int(best[1])
+
+        # depth >= 2: beam expansion
+        beam = []
+        for sc, a0, lhs1, rhs1, solved1 in candidates:
+            beam.append((sc, [a0], lhs1, rhs1, solved1))
+
+        for d in range(2, self.planner_depth + 1):
+            # time/expansion guards
+            if expansions >= self.planner_expansion_budget:
+                break
+            if (time.time() - start_t) * 1000.0 >= self.planner_time_budget_ms:
+                break
+
+            # keep top beam
+            beam.sort(key=lambda x: -x[0])
+            beam = beam[:self.planner_beam]
+            new_beam = []
+
+            for sc, path, lhsc, rhsc, solvedc in beam:
+                if solvedc:
+                    new_beam.append((sc, path, lhsc, rhsc, True))
+                    continue
+
+                # get child actions for this node
+                actions_c, mask_c = self._actions_and_mask(lhsc, rhsc)
+                legal_c = np.flatnonzero(mask_c) if mask_c is not None else np.arange(self.action_dim)
+                if len(legal_c) == 0:
+                    new_beam.append((sc, path, lhsc, rhsc, False))
+                    continue
+
+                Cc = self.state_complexity(lhsc, rhsc)
+                for a in legal_c:
+                    op, term = actions_c[a]
+                    try:
+                        lhs2 = op(lhsc, term); rhs2 = op(rhsc, term)
+                        is_valid, lhs2, rhs2 = check_valid_eqn(lhs2, rhs2)
+                        if not is_valid:
+                            continue
+                        C2 = self.state_complexity(lhs2, rhs2)
+                        dC = (Cc - C2)
+                        solved2 = check_eqn_solved(lhs2, rhs2, self.main_eqn)
+                        sc2 = sc + dC + (self.planner_terminal_bonus if solved2 else 0.0)
+                        if self.state_hash(lhs2, rhs2) in self._recent_hashes:
+                            sc2 -= self.planner_loop_penalty
+                        new_beam.append((sc2, path + [a], lhs2, rhs2, solved2))
+                    except Exception:
+                        continue
+
+                    expansions += 1
+                    if expansions >= self.planner_expansion_budget:
+                        break
+                if expansions >= self.planner_expansion_budget:
+                    break
+
+            if not new_beam:
+                break
+            beam = new_beam
+
+        # pick best leaf and return its FIRST action
+        beam.sort(key=lambda x: -x[0])
+        best = beam[0]
+        a_first = best[1][0]
+        # update tabu with root hash (light loop-avoidance)
+        self._recent_hashes.append(root_hash)
+        # restore root state for real step execution
+        self.restore(root_snap)
+        return int(a_first)
+
+    # ----------------------- rest of class -----------------------
+    def sample_poesia_equation(self, *, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+
+        template = np.random.choice(self.templates)          # raw line
+        placeholders = set(re.findall(r'-?\d+', template))   # e.g. "-2", "5"
+
+        eq_str = template
+        for ph in placeholders:
+            rnd = np.random.randint(-10, 11)                # may be 0
+            eq_str = eq_str.replace(ph, _int_to_symbol(rnd))
+
+        # convert "ax" → "a*x", "bx" → "b*x",  "0x" is impossible now
+        eq_str = re.sub(r'([A-Za-z])x\b', r'\1*x', eq_str)
+
+        # "lhs = rhs"  →  "lhs - (rhs)"
+        if '=' in eq_str:
+            lhs, rhs = map(str.strip, eq_str.split('=', 1))
+            eq_str = f'{lhs} - ({rhs})'
+
+        return sympify(eq_str)
+
+    def reset(self, seed=None, options=None):
+        # Need to randomly sample each time
+        if self.generalization == 'poesia-full':
+            self.main_eqn = self.sample_poesia_equation()
+        else:
+            # Sample eqn in a 'curriculum' fashion:
+            # pick eqn with probability ~ 1/(1+solve_counts)
+            eqn_probs = []
+            if options == None:
+                if self.use_curriculum == True:
+                    for eqn_str in self.train_eqns_str:
+                        eqn_probs.append( 1.0 / (1 + self.solve_counts[eqn_str]) )
+                    eqn_probs = np.array(eqn_probs, dtype=np.float64)
+                    eqn_probs /= eqn_probs.sum()
+                    chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
+                    self.main_eqn = sympify(chosen_eqn_str)
+                    self.sample_counts[chosen_eqn_str] += 1
+                else:
+                    chosen_eqn_str = np.random.choice(self.train_eqns_str)
+                    self.main_eqn = sympify(chosen_eqn_str)
+            elif options == 'train':
+                chosen_eqn_str = np.random.choice(self.train_eqns_str)
+                self.main_eqn = sympify(chosen_eqn_str)
+            elif options == 'test':
+                chosen_eqn_str = np.random.choice(self.test_eqns_str)
+                self.main_eqn = sympify(chosen_eqn_str)
+
+        self.current_steps = 0
+        self.lhs, self.rhs = self.main_eqn, 0
+        obs, _ = self.to_vec(self.lhs, self.rhs)
+        self.state = obs
+        if self.use_memory:
+            self.traj.clear()
+            self.traj_readable.clear()
+
+        # Recompute actions, masks, etc.
+        self.setup()
+
+        return obs, {}
+
+    def to_vec(self, lhs, rhs):
+        """
+        Convert (lhs, rhs) to a suitable observation 
+        given self.state_rep.
+        """
+        if self.state_rep == 'integer_1d':
+            return integer_encoding_1d(lhs, rhs, self.feature_dict, self.max_expr_length)
+        elif self.state_rep == 'integer_2d':
+            return integer_encoding_2d(lhs, rhs, self.feature_dict, self.max_expr_length)
+        elif self.state_rep in ['graph_integer_1d', 'graph_integer_2d']:
+            return graph_encoding(lhs, rhs, self.feature_dict, self.max_expr_length)
+        else:
+            raise ValueError(f"Unknown state_rep: {self.state_rep}")
+
+    def find_reward(self, lhs_old, rhs_old, lhs_new, rhs_new, is_valid_eqn, is_solved):
+        """
+        Reward = 
+          +100 if solved
+          -100 if invalid eqn
+          else ( oldComplexity - newComplexity )
+               optionally normalized to [-1, 1].
+        """
+        if not is_valid_eqn:
+            reward = self.reward_invalid_equation
+        elif is_solved:
+            reward = self.reward_solved
+        else:
+            old_complex = get_complexity_expression(lhs_old) + get_complexity_expression(rhs_old)
+            new_complex = get_complexity_expression(lhs_new) + get_complexity_expression(rhs_new)
+            reward = old_complex - new_complex
+
+        if self.normalize_rewards:
+            # rescale reward to [-1, 1]
+            # min=-100, max=+100
+            min_r, max_r = self.reward_invalid_equation, self.reward_solved
+            reward = 2.0 * (reward - min_r) / float(max_r - min_r) - 1.0
+
+        return reward
+
+    def render(self, mode="human"):
+        print(f"{self.lhs} = {self.rhs}")
+
+    def get_valid_action_mask(self):
+        return self.action_mask
+
+    def set_equation(self,main_eqn):
+        self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
+        obs, _ = self.to_vec(self.lhs, self.rhs)
+        self.state = obs
+
+
+# ────────────────────────────────────────────────────────────────
+# quick smoke test: set equation exp(x) + b = 0 and step
+# ────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    from sympy import sympify
+
+    # Instantiate the env (no wrappers for this quick test)
+    env = multiEqn(
+        generalization="abel-small",
+        state_rep="integer_1d",
+        normalize_rewards=True,
+        use_curriculum=False,
+        verbose=True,           # print each step's operation
+        use_memory=False,       # set True to exercise kNN imitation
+        use_lookahead=True      # ### NEW: tiny planner on
+    )
+
+    # Standard reset to initialize internal structures
+    obs, info = env.reset(seed=0)
+
+    # Set the specific equation LHS and recompute actions/masks
+    target_eq = sympify("exp(x) + b")
+    env.set_equation(target_eq)
+    env.setup()   # IMPORTANT: refresh actions/masks for the new equation
+
+    print("\n--- TEST: exp(x) + b = 0 ---")
+    print(f"Initial LHS: {env.lhs} ; RHS: {env.rhs}")
+    print(f"Observation shape: {np.shape(obs)}")
+
+    # Take a few random VALID actions (planner may override)
+    max_steps = 3
+    for t in range(max_steps):
+        # choose a valid action index via the mask
+        mask = env.get_valid_action_mask()
+        valid_idxs = np.flatnonzero(mask) if mask is not None else np.arange(env.action_dim)
+        action = int(np.random.choice(valid_idxs)) if len(valid_idxs) > 0 else 0
+
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        print(f"[t={t:02d}] reward={reward:+.3f} | "
+              f"taken={info.get('action_taken')} | "
+              f"is_solved={info.get('is_solved')}")
+
+        if terminated or truncated:
+            break
+
+    print("\nFinal state:")
+    env.render()
