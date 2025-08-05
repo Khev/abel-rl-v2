@@ -299,11 +299,11 @@ class multiEqn(Env):
 
         # ### NEW: tiny lookahead toggle + config
         self.use_lookahead = use_lookahead
-        self.planner_topk = 8
-        self.planner_beam = 3
-        self.planner_depth = 2
-        self.planner_expansion_budget = 128
-        self.planner_time_budget_ms = 3
+        self.planner_topk = 4
+        self.planner_beam = 1
+        self.planner_depth = 1
+        self.planner_expansion_budget = 32
+        self.planner_time_budget_ms = 1
         self.planner_terminal_bonus = 100.0
         self.planner_loop_penalty = 0.5
         self._recent_hashes = deque(maxlen=64)   # tiny tabu list
@@ -372,15 +372,15 @@ class multiEqn(Env):
                     pass
             else:
                 operation, term = action_list[action_index]
-                mem_tuple, sim = self.mem.query(obs_old.flatten()[None, :])    
-                if mem_tuple is not None:
-                    try:
-                        idx_in_current = action_list.index(mem_tuple)
-                        if np.random.rand() < sim:
-                            action_index = idx_in_current
-                            operation, term = action_list[action_index]
-                    except ValueError:
-                        pass
+                # mem_tuple, sim = self.mem.query(obs_old.flatten()[None, :])    
+                # if mem_tuple is not None:
+                #     try:
+                #         idx_in_current = action_list.index(mem_tuple)
+                #         if np.random.rand() < sim:
+                #             action_index = idx_in_current
+                #             operation, term = action_list[action_index]
+                #     except ValueError:
+                #         pass
         else:
             operation, term = action_list[action_index]
 
@@ -796,7 +796,7 @@ if __name__ == "__main__":
 
     # Instantiate the env (no wrappers for this quick test)
     env = multiEqn(
-        generalization="abel-small",
+        generalization="abel-tiny",
         state_rep="integer_1d",
         normalize_rewards=True,
         use_curriculum=False,
