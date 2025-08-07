@@ -179,7 +179,8 @@ class multiEqn(Env):
                  generalization='structural',
                  use_memory=False,
                  use_curriculum=True,
-                 use_lookahead=False               # ### NEW
+                 use_lookahead=False,              # ### NEW
+                 curriculum_type='inverse'         # NEW: 'inverse' or 'progressive'
                  ) -> None:
         super().__init__()
 
@@ -230,6 +231,7 @@ class multiEqn(Env):
         # Solution memories
         self.use_memory = use_memory
         self.use_curriculum = use_curriculum
+        self.curriculum_type = curriculum_type  # NEW: 'inverse' or 'progressive'
         if self.use_memory:
             if generalization == 'poesia-full':
                 self.mem = SolveMemory(capacity=10**7)
@@ -242,11 +244,33 @@ class multiEqn(Env):
         self.train_eqns_str = [str(eq) for eq in self.train_eqns]
         self.test_eqns_str = [str(eq) for eq in self.test_eqns]
 
+        # NEW: Progressive curriculum setup (if applicable)
+        if self.use_curriculum and self.curriculum_type == 'progressive':
+            if self.generalization == 'poesia-full':
+                raise ValueError("Progressive curriculum not supported for 'poesia-full' (dynamic generation); use 'inverse' instead.")
+            self.num_phases = 4  # tunable: more phases = finer progression
+            self.phase_threshold = 0.8  # success rate to advance (80%)
+            self.phase_window = 50  # rolling episodes for avg success
+            self.current_phase = 0
+            self.phase_success = {p: deque(maxlen=self.phase_window) for p in range(self.num_phases)}  # 1=solved, 0=failed per phase
+
+            # Sort train_eqns by ascending complexity
+            sorted_eqns = sorted(self.train_eqns, key=get_complexity_expression)
+            phase_size = len(sorted_eqns) // self.num_phases
+            self.phases = []
+            for i in range(self.num_phases):
+                start = i * phase_size
+                end = start + phase_size if i < self.num_phases - 1 else len(sorted_eqns)
+                self.phases.append(sorted_eqns[start:end])
+            self.phase_eqns_str = [[str(eq) for eq in phase] for phase in self.phases]  # phase-wise strings
+            eqn_str = np.random.choice(self.phase_eqns_str[0])  # initial from phase 0
+        else:
+            eqn_str = np.random.choice(self.train_eqns_str)  # initial for inverse or off
+
         # Random initial eqn
         if generalization == 'poesia-full':
             self.main_eqn = self.sample_poesia_equation()
         else:
-            eqn_str = np.random.choice(self.train_eqns_str)
             self.main_eqn = sympify(eqn_str)
         self.lhs = self.main_eqn
         self.rhs = 0
@@ -488,6 +512,17 @@ class multiEqn(Env):
                 self.traj.clear()
                 self.traj_readable.clear()
 
+        # NEW: Update progressive curriculum if applicable
+        if self.use_curriculum and self.curriculum_type == 'progressive' and terminated:
+            success = 1 if is_solved else 0
+            self.phase_success[self.current_phase].append(success)
+            # Check advance: rolling avg success
+            if len(self.phase_success[self.current_phase]) >= self.phase_window // 2:  # min history
+                avg_success = np.mean(self.phase_success[self.current_phase])
+                if avg_success >= self.phase_threshold and self.current_phase < self.num_phases - 1:
+                    self.current_phase += 1
+                    logger.info(f"Advanced to phase {self.current_phase} (success {avg_success:.2f} >= {self.phase_threshold})")
+
         if self.use_memory:
             if terminated or truncated:
                 self.traj.clear()
@@ -559,7 +594,7 @@ class multiEqn(Env):
         # Build root candidate list
         root_lhs, root_rhs = self.lhs, self.rhs
         root_actions, root_mask = self._actions_and_mask(root_lhs, root_rhs)
-        legal_idxs = np.flatnonzero(root_mask) if root_mask is not None else np.arange(self.action_dim)
+        legal_idxs = np.flatnonzero(root_mask) if root_mask is None else np.arange(self.action_dim)
         if len(legal_idxs) == 0:
             return 0  # fallback
 
@@ -631,7 +666,7 @@ class multiEqn(Env):
 
                 # get child actions for this node
                 actions_c, mask_c = self._actions_and_mask(lhsc, rhsc)
-                legal_c = np.flatnonzero(mask_c) if mask_c is not None else np.arange(self.action_dim)
+                legal_c = np.flatnonzero(mask_c) if mask_c is None else np.arange(self.action_dim)
                 if len(legal_c) == 0:
                     new_beam.append((sc, path, lhsc, rhsc, False))
                     continue
@@ -706,14 +741,23 @@ class multiEqn(Env):
             # pick eqn with probability ~ 1/(1+solve_counts)
             eqn_probs = []
             if options == None:
-                if self.use_curriculum == True:
-                    for eqn_str in self.train_eqns_str:
-                        eqn_probs.append( 1.0 / (1 + self.solve_counts[eqn_str]) )
-                    eqn_probs = np.array(eqn_probs, dtype=np.float64)
-                    eqn_probs /= eqn_probs.sum()
-                    chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
-                    self.main_eqn = sympify(chosen_eqn_str)
-                    self.sample_counts[chosen_eqn_str] += 1
+                if self.use_curriculum:
+                    if self.curriculum_type == 'inverse':
+                        for eqn_str in self.train_eqns_str:
+                            eqn_probs.append( 1.0 / (1 + self.solve_counts[eqn_str]) )
+                        eqn_probs = np.array(eqn_probs, dtype=np.float64)
+                        eqn_probs /= eqn_probs.sum()
+                        chosen_eqn_str = np.random.choice(self.train_eqns_str, p=eqn_probs)
+                        self.main_eqn = sympify(chosen_eqn_str)
+                        self.sample_counts[chosen_eqn_str] += 1
+                    elif self.curriculum_type == 'progressive':
+                        # Sample from current phase (uniform within phase)
+                        phase_eqns_str = self.phase_eqns_str[self.current_phase]
+                        chosen_eqn_str = np.random.choice(phase_eqns_str)
+                        self.main_eqn = sympify(chosen_eqn_str)
+                        self.sample_counts[chosen_eqn_str] += 1
+                    else:
+                        raise ValueError(f"Unknown curriculum_type: {self.curriculum_type}")
                 else:
                     chosen_eqn_str = np.random.choice(self.train_eqns_str)
                     self.main_eqn = sympify(chosen_eqn_str)
@@ -796,10 +840,11 @@ if __name__ == "__main__":
 
     # Instantiate the env (no wrappers for this quick test)
     env = multiEqn(
-        generalization="abel-tiny",
+        generalization="abel-small",
         state_rep="integer_1d",
         normalize_rewards=True,
-        use_curriculum=False,
+        use_curriculum=True,
+        curriculum_type='progressive',
         verbose=True,           # print each step's operation
         use_memory=False,       # set True to exercise kNN imitation
         use_lookahead=True      # ### NEW: tiny planner on
