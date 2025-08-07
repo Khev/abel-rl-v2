@@ -297,7 +297,6 @@ def main(args):
             learning_rate=3e-4,
             ent_coef=0.01,
             gamma=0.99,
-            tensorboard_log=f".tensorboard/tensorboard_masked_n{n_envs}",
             seed=seed
         )
 
