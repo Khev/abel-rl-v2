@@ -152,7 +152,7 @@ def get_agent(agent_type, env, policy="MlpPolicy", **kwargs):
             policy, env,
             replay_buffer_class=PERBuffer,
             replay_buffer_kwargs=dict(alpha=0.6, beta=0.4, eps=1e-5),
-            learning_starts=10**5,
+            learning_starts=10**4,
             **kwargs
         ),
         "ppo": PPO,
@@ -240,7 +240,7 @@ class CustomCNNPolicy(MaskableActorCriticPolicy):
 
 
 
-class GNNFeatureExtractor(BaseFeaturesExtractor):
+class GNNFeatureExtractorOld(BaseFeaturesExtractor):
     """
     Simple GNN Feature Extractor for SB3 PPO with multi-graph batching.
     """
@@ -343,6 +343,102 @@ class GNNFeatureExtractor(BaseFeaturesExtractor):
         return self.fc(x)
 
 
+class GNNFeatureExtractor(BaseFeaturesExtractor):
+    """
+    Wider GNN Feature Extractor for SB3 PPO with multi-graph batching.
+    conv1: in -> 256
+    conv2: 256 -> 512
+    head : 512 -> features_dim (default 512)
+    """
+
+    def __init__(self, observation_space, features_dim: int = 512):
+        super().__init__(observation_space, features_dim)
+
+        in_channels = observation_space["node_features"].shape[1]  # e.g. 2
+
+        # Wider GCN stack
+        self.conv1   = GCNConv(in_channels=in_channels, out_channels=256)
+        self.conv2   = GCNConv(in_channels=256, out_channels=512)
+
+        # Light regularization
+        self.dropout = nn.Dropout(p=0.2)
+
+        # Final projection
+        self.fc = nn.Linear(512, features_dim)
+
+    def forward(self, obs_batch):
+        """
+        obs_batch is a dict of Tensors, each with shape (batch_size, ...)
+        We'll parse it item by item to build a single large "batch" graph.
+        """
+        # Unpack
+        node_features_b = obs_batch["node_features"]  # (batch_size, max_nodes, feat_dim)
+        edge_index_b    = obs_batch["edge_index"]     # (batch_size, 2, max_edges)
+        node_mask_b     = obs_batch["node_mask"]      # (batch_size, max_nodes)
+        edge_mask_b     = obs_batch["edge_mask"]      # (batch_size, max_edges)
+
+        batch_size = node_features_b.shape[0]
+
+        # Accumulate nodes/edges from each item into one big graph
+        all_x = []          # List of [num_nodes_i, feat_dim]
+        all_edge_index = [] # List of [2, num_edges_i]
+        all_batch_idx = []  # Which graph each node belongs to
+        node_offset = 0
+
+        for i in range(batch_size):
+            node_features_i = node_features_b[i]  # (max_nodes, feat_dim)
+            edge_index_i    = edge_index_b[i]     # (2, max_edges)
+            node_mask_i     = node_mask_b[i]      # (max_nodes,)
+            edge_mask_i     = edge_mask_b[i]      # (max_edges,)
+
+            # Dtypes
+            node_features_i = node_features_i.float()
+            node_mask_i     = node_mask_i.bool()
+            edge_mask_i     = edge_mask_i.bool()
+            edge_index_i    = edge_index_i.long()
+
+            # Keep only edges whose endpoints are valid nodes and the edge itself is valid
+            src = edge_index_i[0]
+            dst = edge_index_i[1]
+            valid_edges_i = edge_mask_i & node_mask_i[src] & node_mask_i[dst]
+            edge_index_i = edge_index_i[:, valid_edges_i]
+
+            # Offset node indices for concatenation
+            edge_index_i = edge_index_i + node_offset
+
+            # Accumulate
+            all_x.append(node_features_i)
+            all_edge_index.append(edge_index_i)
+
+            n_nodes_i = node_features_i.shape[0]
+            batch_i = torch.full((n_nodes_i,), i, dtype=torch.long)
+            all_batch_idx.append(batch_i)
+
+            node_offset += n_nodes_i
+
+        # Concatenate across the batch
+        x = torch.cat(all_x, dim=0)               # (sum_nodes, feat_dim)
+        edge_index = torch.cat(all_edge_index, 1) # (2, sum_edges)
+        batch_idx  = torch.cat(all_batch_idx, 0)  # (sum_nodes,)
+
+        # Ensure tensors share device
+        device = x.device
+        edge_index = edge_index.to(device)
+        batch_idx  = batch_idx.to(device)
+
+        # GCN forward (wider)
+        x = F.relu(self.conv1(x, edge_index))
+        x = self.dropout(x)
+        x = F.relu(self.conv2(x, edge_index))
+        x = self.dropout(x)
+
+        # Pool per-graph
+        x = global_mean_pool(x, batch_idx)        # (batch_size, 512)
+
+        return self.fc(x)                          # (batch_size, features_dim)
+
+
+
 class CustomGNNPolicy(MaskableActorCriticPolicy):
     def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
         super().__init__(
@@ -354,9 +450,6 @@ class CustomGNNPolicy(MaskableActorCriticPolicy):
             **kwargs
         )
 
-
-################################################################################
-# SECOND GNN # 
 
 
 class ImprovedGNNFeatureExtractor(BaseFeaturesExtractor):

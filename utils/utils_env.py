@@ -61,7 +61,7 @@ def make_feature_dict_integer_1d(main_eqn):
             ctr += 1
 
     ctr = -1
-    operations = ['add', 'pow', 'mul', 'sqrt']
+    operations = ['add', 'pow', 'mul', 'sqrt'] +  ['sin', 'cos', 'asin','acos', 'exp', 'log']
     for operation in operations:
         feature_dict[operation] = ctr
         ctr -= 1
@@ -290,6 +290,11 @@ def get_ordered_sub_expressions(expr):
     return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
 
 
+def mask_fn(env):
+    """Return a bool / int mask of valid actions for ActionMasker."""
+    return env.action_mask
+
+
 def check_valid_eqn(lhs, rhs):
     """
     Validates and modifies an equation (lhs = rhs) for solving.
@@ -330,9 +335,65 @@ def check_valid_eqn(lhs, rhs):
     return True, lhs, rhs
 
 
-from sympy import symbols, ratsimp, powdenest  # add these at top of utils/utils_env.py
+from sympy import symbols, sympify, powdenest, ratsimp
+
+def _expr(obj):
+    """
+    Ensure *anything* is a SymPy expression.
+    Scalars such as `int`, `float`, … are wrapped via `sympify`.
+    """
+    # The light-weight check: every SymPy Basic has `.free_symbols`
+    return obj if hasattr(obj, "free_symbols") else sympify(obj, evaluate=True)
+
+
+def _is_x_free(expr, x):
+    """
+    True ↔ `x` is **not** among the free symbols of `expr`.
+    Falls back to True if `expr` has no `.free_symbols`
+    (i.e. it is already a numeric constant).
+    """
+    return not hasattr(expr, "free_symbols") or x not in expr.free_symbols
+
 
 def check_eqn_solved(lhs, rhs, main_eqn):
+    """
+    Return True iff the equation `lhs = rhs` is solved for `x`.
+
+    A solved form is either        x = g(⋯)   or   g(⋯) = x
+    where `x` is **absent** from the opposite side.
+    """
+    x   = symbols("x")
+    lhs = _expr(lhs)
+    rhs = _expr(rhs)
+
+    # ﹏﹏ Isolate x on exactly one side ﹏﹏
+    if lhs == x and _is_x_free(rhs, x):
+        candidate = rhs
+    elif rhs == x and _is_x_free(lhs, x):
+        candidate = lhs
+    else:
+        return False
+
+    # ﹏﹏ Verify that the candidate indeed solves the original equation ﹏﹏
+    residual = _expr(main_eqn).subs(x, candidate)
+
+    # Cheap checks first, then progressively heavier ones
+    if residual == 0 or getattr(residual, "is_zero", False):
+        return True
+    if residual.expand() == 0:
+        return True
+    if powdenest(residual, force=True) == 0:
+        return True
+    if ratsimp(residual) == 0:
+        return True
+
+    return False
+
+
+
+from sympy import symbols, ratsimp, powdenest  # add these at top of utils/utils_env.py
+
+def check_eqn_solved_old_2(lhs, rhs, main_eqn):
     """
     Returns True iff the equation `lhs = rhs` is solved for x.
 
@@ -857,8 +918,6 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
         train_eqns (list): List of sympified train equations.
         test_eqns (list): List of sympified test equations.
     """
-    if generalization not in ["shallow", "lexical", "structural", "deep", "random", "poesia", "poesia-full"]:
-        raise ValueError(f"Invalid generalization type '{generalization}'. Choose 'shallow' or 'deep'.")
 
     if generalization == 'poesia':
         train_eqns_path = 'equation_templates/poesia/eqns.txt'
@@ -881,6 +940,51 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
             train_eqns = []  # these are generated on the fly.
         return train_eqns, test_eqns
 
+    if generalization == 'poesia-med':
+        train_eqns_path = 'equation_templates/poesia-med/train_equations.txt'
+        test_eqns_path = 'equation_templates/poesia-med/test_equations.txt'
+        with open(train_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        return train_eqns, test_eqns
+
+    if generalization == 'poesia-small':
+        train_eqns_path = 'equation_templates/poesia-small/train_equations.txt'
+        test_eqns_path = 'equation_templates/poesia-small/test_equations.txt'
+        with open(train_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        return train_eqns, test_eqns
+
+
+    if generalization == 'poesia-tiny':
+        train_eqns_path = 'equation_templates/poesia-tiny/train_equations.txt'
+        test_eqns_path = 'equation_templates/poesia-tiny/test_equations.txt'
+        with open(train_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        return train_eqns, test_eqns
+
+    if generalization == 'abel-tiny':
+        train_eqns_path = 'equation_templates/abel-tiny/train_equations.txt'
+        test_eqns_path = 'equation_templates/abel-tiny/test_equations.txt'
+        with open(train_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        return train_eqns, test_eqns
+
+    if generalization == 'abel-small':
+        train_eqns_path = 'equation_templates/abel-small/train_equations.txt'
+        test_eqns_path = 'equation_templates/abel-small/test_equations.txt'
+        with open(train_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        return train_eqns, test_eqns
 
     # Construct path based on generalization type
     level_dir = os.path.join(dirn, generalization, f"level{level}")
