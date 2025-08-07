@@ -1,0 +1,20 @@
+x+f
+h*x+e
+sqrt(x) - a
+c*sin(x)+a
+x**2 + i
+a/x - b
+(a*x - b)/(c*x - d) - e
+e + (c*x + d)/(a*x + b)
+(a*(x + h) - b)/(c*x + d) + e
+g*((a*x + b)/(c*x + d)) - h
+exp(a*x + b) + c
+log(a*(x + h) + b) + c
+sin(a*x + b) + c
+cos(a*x - b) + c
+sqrt(a*x + b) - c
+(x + b)/a - c
+a*(x + b) + c
+(a - b)*x + c
+d - 1/(a*x + b)
+c - log(a*x + b)

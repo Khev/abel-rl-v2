@@ -1,0 +1,10 @@
+b*x+c
+-b - i + j*x
+-a + sqrt(d + j*x)
+-g + (e*x + g)**2
+-f + sin(j*x + j)
+b + sin(a*x - h)
+-h + log(-i*(a*x + b))
+-b*exp(-b + d*x) + h
+d/x - j
+e + exp(b*x + d)

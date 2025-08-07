@@ -1,0 +1,75 @@
+b*x
+c*x
+(e+f)*x
+x + d
+x - f
+x + (j+a)
+d*x + e
+f*x + i
+j*x + c
+g/x + i
+h/x + a
+c/x + (d+e)
+h*(f*x + i) + j
+g*(d*x + a) + b
+e*(j*x + c) + (a+h)
+i/(c*x + d) + a
+h/(f*x + g) + j
+b/(j*x + a) + (e+g)
+j*(d*x + e) + (a*x + c)
+g*(h*x + a) + (i*x + b)
+f*(c*x + j) + (d*x + a+h)
+(d*x + e)/(g*x + h) + i
+(f*x + a)/(j*x + c) + b
+(i*x + j)/(a*x + e) + (d+a)
+log(x) + d
+log(x) + f
+log(x) + (i+a)
+exp(x) + c
+exp(x) + g
+exp(x) + (j+b)
+sin(x) + a
+sin(x) + d
+sin(x) + (h+a)
+cos(x) + e
+cos(x) + i
+cos(x) + (a+b)
+sqrt(x) - c 
+sqrt(x) - g
+sqrt(x) - (j+a)
+x**2 + d
+x**2 + h
+x**2 + (i+c) 
+a*log(x) + b
+d*log(x) + g
+(i+a)*log(x) + c
+b*exp(x) + e
+f*exp(x) + a
+h*exp(x) + (j+b)
+c*sin(x) + d
+g*sin(x) + i
+j*sin(x) + (a+c)
+a*cos(x) + h
+e*cos(x) + b
+i*cos(x) + (f+c)
+d*sqrt(x) - c
+g*sqrt(x) - e
+j*sqrt(x) - (h+b)
+a*(x**2) + b
+f*(x**2) + c
+i*(x**2) + (a+d)
+(a*x - b)/(c*x - d) - e
+e + (c*x + d)/(a*x + b)
+(a*(x + h) - b)/(c*x + d) + e
+exp(a*x + b) + c
+exp(a*x + b) + (c+d)
+log(a*(x + h) + b) + c
+sin(a*x + b) + c
+cos(a*x - b) + c
+sqrt(a*x + b) - c
+(x + b)/a - c
+a*(x + b) + c
+(a - b)*x + c
+d - 1/(a*x + b)
+c - log(a*x + b)
+sqrt(sqrt(x) - b) - (c+d)

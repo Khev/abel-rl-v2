@@ -1,0 +1,22 @@
+a*x
+x + a
+a*x + b
+a/x + b
+c*(a*x + b) + d
+d/(a*x + b) + c
+e*(a*x + b) + (c*x + d)
+(a*x + b)/(c*x + d) + e
+exp(x) + b
+log(x) + b
+exp(a*x + b) + c
+log(a*x + b) + c
+x**2 + b
+(a*x + b)**2 + c
+sqrt(x) - b
+sqrt(a*x + b) - c
+sin(x) + b
+cos(x) + b
+sin(a*x + b) + c
+cos(a*x + b) + c
+(a*x + b)**2 + c
+(a*x + b)/c + d
