@@ -370,7 +370,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--algo",              type=str, default='ppo')
     p.add_argument("--Ntrain",            type=int, default=10**7, help="total PPO timesteps (do NOT multiply by n_envs)")
-    p.add_argument("--n_envs",            type=int, default=4,     help="number of parallel environments")
+    p.add_argument("--n_envs",            type=int, default=2,     help="number of parallel environments")
     p.add_argument("--trials",            type=int, default=3,     help="number of trials per scenario (different seeds)")
     p.add_argument("--seed",              type=int, default=98112,    help="base seed; per-trial seed = base + 1000*trial_idx")
     p.add_argument("--gen",               type=str, default="abel-small")
@@ -386,8 +386,7 @@ if __name__ == "__main__":
 
     # Scenarios to run (fixed set)
     scenarios = [
-        ('ppo',     'True'),
-        ('ppo',     'False')
+        ('ppo',     'True')
     ]
 
     # IMPORTANT: keep total frames constant across n_envs
