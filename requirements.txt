@@ -2,6 +2,7 @@
 stable-baselines3==2.4.0
 sb3_contrib==2.4.0
 gymnasium==0.29.1
+rllte-core
 
 # Basic ML/Math stack
 numpy==1.26.4
