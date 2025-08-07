@@ -12,11 +12,7 @@ matplotlib==3.6.0
 # Logging and CLI tools
 tqdm==4.67.1
 colorama==0.4.6
-
-# Plotting and analysis
-seaborn==0.12.2
-plotly==5.23.0
-optuna==4.2.1
+boto3
 
 # Torch stack
 torch==2.3.1
@@ -25,5 +21,3 @@ torchvision==0.18.1
 # Optional GNN support
 torch-geometric==2.6.1
 
-# Dev utils (optional)
-wandb==0.18.7
