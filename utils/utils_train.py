@@ -1,6 +1,6 @@
 import torch
 import multiprocessing as mp
-import gym  # ✅ Needed for observation spaces
+import gymnasium as gym  # ✅ Needed for observation spaces
 import torch.nn as nn
 import torch.nn.functional as F  # ✅ Needed for activation functions
 
